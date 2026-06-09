@@ -1,0 +1,94 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Dark obsidian base — Ancient Greek night */
+    --background: 240 10% 4%;
+    --foreground: 40 20% 90%;
+
+    --card: 240 8% 8%;
+    --card-foreground: 40 20% 90%;
+
+    --popover: 240 8% 8%;
+    --popover-foreground: 40 20% 90%;
+
+    /* Gold primary */
+    --primary: 43 74% 52%;
+    --primary-foreground: 240 10% 4%;
+
+    --secondary: 240 5% 15%;
+    --secondary-foreground: 40 20% 90%;
+
+    --muted: 240 5% 12%;
+    --muted-foreground: 240 5% 60%;
+
+    --accent: 43 74% 52%;
+    --accent-foreground: 240 10% 4%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 40 20% 90%;
+
+    --border: 240 5% 18%;
+    --input: 240 5% 15%;
+    --ring: 43 74% 52%;
+
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+
+  /* Greek column decorative scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-obsidian-900;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-gold-600 rounded-full;
+  }
+}
+
+@layer components {
+  /* Gold shimmer effect for headings */
+  .gold-shimmer {
+    background: linear-gradient(
+      90deg,
+      #d4af37 0%,
+      #fde68a 40%,
+      #d4af37 60%,
+      #b8960c 100%
+    );
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: shimmer 3s linear infinite;
+  }
+
+  /* Marble card border */
+  .marble-border {
+    border: 1px solid;
+    border-image: linear-gradient(135deg, #d4af37, #52525b, #d4af37) 1;
+  }
+
+  /* Greek column divider */
+  .column-divider {
+    @apply relative flex items-center;
+  }
+  .column-divider::before,
+  .column-divider::after {
+    content: "";
+    @apply flex-1 h-px bg-gradient-to-r from-transparent via-gold-600 to-transparent;
+  }
+}
