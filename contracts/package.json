@@ -6,6 +6,9 @@
     "compile": "hardhat compile",
     "test": "hardhat test",
     "deploy": "hardhat run scripts/deploy.ts --network fuji",
+    "deploy:local": "hardhat run scripts/deploy.ts --network localhost",
+    "seed": "hardhat run scripts/seedDemo.ts --network fuji",
+    "seed:local": "hardhat run scripts/seedDemo.ts --network localhost",
     "node": "hardhat node",
     "clean": "hardhat clean"
   },
