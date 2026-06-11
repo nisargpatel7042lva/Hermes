@@ -4,10 +4,10 @@ import { logger } from "./logger";
 
 // ── Config ────────────────────────────────────────────────────────────────
 
-const MODEL_NAME     = "gemini-2.0-flash";
+const MODEL_NAME     = "gemini-2.5-flash";
 const PASS_THRESHOLD = 60;          // minimum score to auto-release payment
-const MAX_CONTENT    = 8_000;       // chars sent to Gemini
-const FETCH_TIMEOUT  = 12_000;      // ms
+const MAX_CONTENT    = 3_000;       // chars sent to Gemini — enough to judge, faster to process
+const FETCH_TIMEOUT  = 8_000;       // ms
 
 let genAI: GoogleGenerativeAI;
 
@@ -88,17 +88,9 @@ export async function verifyMilestone(
     };
   }
 
-  // ── Step 2: Call Gemini ──────────────────────────────────────────────────
+  // ── Step 2: Call Gemini (with rate-limit retry) ──────────────────────────
   const prompt = buildPrompt(milestoneDescription, deliverableUrl, content);
-
-  let raw: string;
-  try {
-    const model  = genAI.getGenerativeModel({ model: MODEL_NAME });
-    const result = await model.generateContent(prompt);
-    raw = result.response.text();
-  } catch (err) {
-    throw new Error(`Gemini API call failed: ${String(err)}`);
-  }
+  const raw = await callGeminiWithRetry(prompt);
 
   // ── Step 3: Parse response ───────────────────────────────────────────────
   let parsed: {
@@ -127,8 +119,35 @@ export async function verifyMilestone(
     passed,
     score:       parsed.score,
     reasoning:   parsed.reasoning,
-    keyFindings: parsed.keyFindings ?? [],
+    keyFindings: [],
   };
+}
+
+// ── Gemini call with rate-limit retry ────────────────────────────────────
+
+async function callGeminiWithRetry(prompt: string, maxAttempts = 3): Promise<string> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const model  = genAI.getGenerativeModel({ model: MODEL_NAME });
+      const result = await model.generateContent(prompt);
+      return result.response.text();
+    } catch (err: any) {
+      const msg = String(err);
+      const isRateLimit = msg.includes("429") || msg.includes("quota") || msg.includes("RESOURCE_EXHAUSTED");
+
+      if (isRateLimit && attempt < maxAttempts) {
+        // Parse the suggested retry delay from the error body, default 65s
+        const match = msg.match(/"retryDelay":"(\d+)s"/);
+        const waitSec = match ? Math.min(parseInt(match[1]) + 2, 120) : 65;
+        logger.warn(`Gemini rate-limited — waiting ${waitSec}s then retrying (${attempt}/${maxAttempts - 1})…`);
+        await new Promise(r => setTimeout(r, waitSec * 1_000));
+        continue;
+      }
+
+      throw new Error(`Gemini API call failed: ${msg}`);
+    }
+  }
+  throw new Error("Gemini: max retries exceeded");
 }
 
 // ── Content fetching ──────────────────────────────────────────────────────
@@ -222,32 +241,17 @@ function buildPrompt(
   url: string,
   content: string
 ): string {
-  return `You are a strict but fair work verifier for a freelance payment escrow platform called HERMES.
+  return `You are a freelance work verifier. Be fast and decisive.
 
-Milestone requirement:
-"""
-${description}
-"""
+MILESTONE REQUIREMENT: ${description}
 
-Deliverable URL submitted: ${url}
-
-Content fetched from the deliverable:
-"""
+DELIVERABLE (${url}):
 ${content}
-"""
 
-Evaluate whether the submitted work satisfactorily completes the milestone requirement.
-Be strict but fair. The work must clearly demonstrate completion of what was asked.
-A score below ${PASS_THRESHOLD} means the milestone fails and payment is withheld.
-Consider: completeness, quality, relevance to the requirement, and evidence of real work.
+Does this deliverable complete the milestone? Score ≥${PASS_THRESHOLD} = payment released.
 
-Respond with ONLY valid JSON — no markdown, no commentary, just the object:
-{
-  "passed": true or false,
-  "score": integer between 0 and 100,
-  "reasoning": "one concise paragraph, max 80 words, explaining your verdict",
-  "keyFindings": ["finding 1", "finding 2", "finding 3"]
-}`;
+Reply with ONLY this JSON, no markdown:
+{"passed":true/false,"score":0-100,"reasoning":"one sentence max 20 words"}`;
 }
 
 // ── JSON parsing ──────────────────────────────────────────────────────────
@@ -278,8 +282,6 @@ function parseGeminiJson(raw: string): {
     passed:      Boolean(obj.passed),
     score:       Math.max(0, Math.min(100, Number(obj.score))),
     reasoning:   String(obj.reasoning ?? ""),
-    keyFindings: Array.isArray(obj.keyFindings)
-      ? obj.keyFindings.map(String)
-      : [],
+    keyFindings: [],
   };
 }

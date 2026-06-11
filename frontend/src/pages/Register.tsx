@@ -54,7 +54,7 @@ export default function Register() {
     setTxStatus("loading");
     setToast("pending");
     try {
-      const hash = await registerAgent(name.trim(), role);
+      const hash = await registerAgent(name.trim(), role.toLowerCase());
       setTxHash(hash);
       setToast("success");
       setTxStatus("done");

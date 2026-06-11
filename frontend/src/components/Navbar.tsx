@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Menu, X } from "lucide-react";
+import { Menu, X, Copy, RefreshCw, LogOut, Check } from "lucide-react";
 import { useWallet } from "../contexts/WalletContext";
 
 const LINKS = [
@@ -11,10 +11,141 @@ const LINKS = [
   { label: "Profile", to: "/profile" },
 ];
 
+function WalletDropdown({ account }: { account: string }) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const { disconnect, connectWallet, setShowPicker, availableWallets } = useWallet();
+  const ref = useRef<HTMLDivElement>(null);
+
+  const shorten = (addr: string) => `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const copyAddress = () => {
+    navigator.clipboard.writeText(account);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  const changeWallet = () => {
+    setOpen(false);
+    if (availableWallets.length > 1) {
+      setShowPicker(true);
+    } else {
+      disconnect();
+      connectWallet();
+    }
+  };
+
+  const handleDisconnect = () => {
+    setOpen(false);
+    disconnect();
+  };
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="liquid-glass rounded-full px-4 py-2 flex items-center gap-2 transition-all duration-200 hover:scale-105"
+        style={{ border: open ? "1px solid rgba(201,168,76,0.4)" : "1px solid rgba(201,168,76,0.15)" }}
+      >
+        <span className="w-2 h-2 rounded-full bg-green-400 shrink-0" />
+        <span className="font-sans text-sm" style={{ color: "rgba(240,235,225,0.7)" }}>{shorten(account)}</span>
+        <span className="font-sans text-xs" style={{ color: "rgba(240,235,225,0.25)" }}>Fuji</span>
+        <motion.span
+          animate={{ rotate: open ? 180 : 0 }}
+          transition={{ duration: 0.2 }}
+          className="font-sans text-xs ml-0.5"
+          style={{ color: "rgba(201,168,76,0.5)" }}
+        >
+          ▾
+        </motion.span>
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -8, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -8, scale: 0.96 }}
+            transition={{ duration: 0.15, ease: "easeOut" }}
+            className="absolute right-0 mt-2 w-52 rounded-2xl overflow-hidden"
+            style={{
+              background: "rgba(15,13,26,0.97)",
+              border: "1px solid rgba(201,168,76,0.18)",
+              backdropFilter: "blur(20px)",
+              boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+            }}
+          >
+            {/* Address display */}
+            <div className="px-4 pt-4 pb-3" style={{ borderBottom: "1px solid rgba(240,235,225,0.06)" }}>
+              <div className="font-sans text-xs mb-1" style={{ color: "rgba(240,235,225,0.3)" }}>Connected</div>
+              <div className="font-mono text-xs break-all" style={{ color: "rgba(240,235,225,0.6)" }}>
+                {account.slice(0, 10)}...{account.slice(-8)}
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="p-2">
+              <DropdownItem icon={copied ? <Check size={14} /> : <Copy size={14} />} onClick={copyAddress}>
+                {copied ? "Copied!" : "Copy Address"}
+              </DropdownItem>
+              <DropdownItem icon={<RefreshCw size={14} />} onClick={changeWallet}>
+                Change Wallet
+              </DropdownItem>
+              <DropdownItem icon={<LogOut size={14} />} onClick={handleDisconnect} danger>
+                Disconnect
+              </DropdownItem>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function DropdownItem({
+  icon, children, onClick, danger,
+}: {
+  icon: React.ReactNode;
+  children: React.ReactNode;
+  onClick: () => void;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all hover:scale-[1.01]"
+      style={{
+        color: danger ? "#E84142" : "rgba(240,235,225,0.6)",
+        background: "transparent",
+      }}
+      onMouseEnter={e => {
+        (e.currentTarget as HTMLElement).style.background = danger
+          ? "rgba(232,65,66,0.08)"
+          : "rgba(240,235,225,0.05)";
+      }}
+      onMouseLeave={e => {
+        (e.currentTarget as HTMLElement).style.background = "transparent";
+      }}
+    >
+      <span style={{ color: danger ? "#E84142" : "rgba(201,168,76,0.7)" }}>{icon}</span>
+      <span className="font-sans text-sm">{children}</span>
+    </button>
+  );
+}
+
 export default function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const { account, isConnected, connectWallet } = useWallet();
+  const { account, isConnected, connectWallet, disconnect } = useWallet();
   const location = useLocation();
 
   useEffect(() => {
@@ -75,11 +206,7 @@ export default function Navbar() {
         {/* Right — wallet */}
         <div className="hidden md:block">
           {isConnected && account ? (
-            <div className="liquid-glass rounded-full px-4 py-2 flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-green-400" />
-              <span className="font-sans text-sm text-marble/70">{shorten(account)}</span>
-              <span className="font-sans text-xs text-marble/30">Fuji</span>
-            </div>
+            <WalletDropdown account={account} />
           ) : (
             <button
               onClick={connectWallet}
@@ -120,7 +247,7 @@ export default function Navbar() {
                   {label}
                 </NavLink>
               ))}
-              {!isConnected && (
+              {!isConnected ? (
                 <button
                   onClick={connectWallet}
                   className="font-sans text-sm mt-2 py-2 rounded-full liquid-glass"
@@ -128,9 +255,26 @@ export default function Navbar() {
                 >
                   Connect Wallet
                 </button>
-              )}
-              {isConnected && account && (
-                <span className="font-mono text-xs text-marble/30">{shorten(account)}</span>
+              ) : account && (
+                <div className="flex flex-col gap-2 pt-1" style={{ borderTop: "1px solid rgba(240,235,225,0.06)" }}>
+                  <span className="font-mono text-xs pt-2" style={{ color: "rgba(240,235,225,0.3)" }}>
+                    {shorten(account)}
+                  </span>
+                  <button
+                    onClick={() => { navigator.clipboard.writeText(account); }}
+                    className="font-sans text-xs text-left"
+                    style={{ color: "rgba(201,168,76,0.6)" }}
+                  >
+                    Copy address
+                  </button>
+                  <button
+                    onClick={disconnect}
+                    className="font-sans text-xs text-left"
+                    style={{ color: "#E84142" }}
+                  >
+                    Disconnect
+                  </button>
+                </div>
               )}
             </div>
           </motion.div>

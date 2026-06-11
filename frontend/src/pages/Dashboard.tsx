@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, ExternalLink } from "lucide-react";
+import { ChevronDown, ExternalLink, RefreshCw } from "lucide-react";
 import FadeUp from "../components/animations/FadeUp";
 import TransactionToast, { ToastStatus } from "../components/TransactionToast";
 import { useWallet } from "../contexts/WalletContext";
@@ -59,7 +59,7 @@ export default function Dashboard() {
     loadJobs();
   }, [account, tab]);
 
-  const loadJobs = async () => {
+  const loadJobs = useCallback(async () => {
     if (!account) return;
     setLoading(true);
     setJobs([]);
@@ -78,23 +78,42 @@ export default function Dashboard() {
       setJobs(fetched.reverse());
     } catch {}
     setLoading(false);
-  };
+  }, [account, tab]);
 
-  const loadMilestones = async (jobId: number, count: number) => {
+  // Always fetches fresh — used both for initial load and polling
+  const fetchMilestones = useCallback(async (jobId: number, count: number) => {
     for (let i = 0; i < count; i++) {
       const key = `${jobId}-${i}`;
-      if (milestones[key]) continue;
       try {
         const m = await getMilestone(jobId, i);
         if (m) setMilestones(prev => ({ ...prev, [key]: m as MilestoneData }));
       } catch {}
     }
-  };
+  }, [getMilestone]);
+
+  // Poll every 5s while any visible milestone is "Submitted" (status 1)
+  const expandedJobRef = useRef<{ id: number; count: number } | null>(null);
+  useEffect(() => {
+    const job = jobs.find(j => j.id === expanded);
+    expandedJobRef.current = job ? { id: job.id, count: job.milestoneCount } : null;
+  }, [expanded, jobs]);
+
+  useEffect(() => {
+    const hasSubmitted = Object.values(milestones).some(m => m.status === 1);
+    if (!hasSubmitted || expanded === null) return;
+
+    const interval = setInterval(() => {
+      const ref = expandedJobRef.current;
+      if (ref) fetchMilestones(ref.id, ref.count);
+    }, 5_000);
+
+    return () => clearInterval(interval);
+  }, [milestones, expanded, fetchMilestones]);
 
   const handleExpand = (jobId: number, count: number) => {
     if (expanded === jobId) { setExpanded(null); return; }
     setExpanded(jobId);
-    loadMilestones(jobId, count);
+    fetchMilestones(jobId, count);
   };
 
   const handleSubmit = async (jobId: number, milestoneId: number) => {
@@ -114,13 +133,11 @@ export default function Dashboard() {
       }));
       // Clear URL input
       setSubmitUrls(prev => { const n = { ...prev }; delete n[key]; return n; });
-      // Re-fetch from chain after 3s to get accurate status
-      setTimeout(async () => {
-        try {
-          const fresh = await getMilestone(jobId, milestoneId);
-          if (fresh) setMilestones(prev => ({ ...prev, [key]: fresh as MilestoneData }));
-        } catch {}
-      }, 3000);
+      // Re-fetch all milestones for this job after 3s
+      setTimeout(() => {
+        const job = jobs.find(j => j.id === jobId);
+        if (job) fetchMilestones(job.id, job.milestoneCount);
+      }, 3_000);
     } catch (e: any) {
       const msg = e?.reason ?? e?.info?.error?.message ?? e?.shortMessage ?? e?.message ?? "Submit failed";
       setErrMsg(msg);
@@ -139,11 +156,24 @@ export default function Dashboard() {
       <div className="max-w-5xl mx-auto">
 
         {/* Header */}
-        <FadeUp className="mb-8">
-          <h1 className="font-cinzel text-5xl mb-2" style={{ color: "#F0EBE1" }}>The Arena</h1>
-          <p className="font-instrument italic text-xl" style={{ color: "rgba(240,235,225,0.4)" }}>
-            Where work meets its reward
-          </p>
+        <FadeUp className="mb-8 flex items-start justify-between">
+          <div>
+            <h1 className="font-cinzel text-5xl mb-2" style={{ color: "#F0EBE1" }}>The Arena</h1>
+            <p className="font-instrument italic text-xl" style={{ color: "rgba(240,235,225,0.4)" }}>
+              Where work meets its reward
+            </p>
+          </div>
+          {isConnected && (
+            <button
+              onClick={loadJobs}
+              disabled={loading}
+              className="mt-2 flex items-center gap-2 liquid-glass rounded-full px-4 py-2 font-sans text-sm transition-all hover:scale-105 disabled:opacity-40"
+              style={{ color: "#C9A84C" }}
+            >
+              <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
+              Refresh
+            </button>
+          )}
         </FadeUp>
 
         {/* Tab toggle */}

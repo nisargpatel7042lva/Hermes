@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Plus, X, ExternalLink } from "lucide-react";
 import FadeUp from "../components/animations/FadeUp";
 import TransactionToast, { ToastStatus } from "../components/TransactionToast";
@@ -14,7 +14,7 @@ interface Milestone {
 }
 
 export default function PostJob() {
-  const { isConnected, account } = useWallet();
+  const { isConnected, account, provider } = useWallet();
   const { approveUSDC, createJob, getAgentByWallet } = useContract();
 
   const [title, setTitle] = useState("");
@@ -28,6 +28,16 @@ export default function PostJob() {
   const [toast, setToast] = useState<ToastStatus>(null);
   const [txHash, setTxHash] = useState<string>();
   const [errMsg, setErrMsg] = useState<string>();
+  const [usdcBalance, setUsdcBalance] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!account || !provider) return;
+    const USDC_ABI = ["function balanceOf(address) external view returns (uint256)"];
+    const usdc = new ethers.Contract(addresses.usdcFuji, USDC_ABI, provider);
+    usdc.balanceOf(account)
+      .then((raw: bigint) => setUsdcBalance(formatUSDC(raw)))
+      .catch(() => setUsdcBalance(null));
+  }, [account, provider]);
 
   const total = milestones.reduce((s, m) => s + (parseFloat(m.amount) || 0), 0);
 
@@ -201,13 +211,34 @@ export default function PostJob() {
 
               {/* Total */}
               <div className="liquid-glass rounded-xl p-4 mt-4 flex items-center justify-between">
-                <span className="font-sans text-sm" style={{ color: "rgba(240,235,225,0.5)" }}>
-                  Total Escrow Amount
-                </span>
+                <div>
+                  <span className="font-sans text-sm" style={{ color: "rgba(240,235,225,0.5)" }}>
+                    Total Escrow Amount
+                  </span>
+                  {usdcBalance !== null && (
+                    <div className="font-sans text-xs mt-0.5" style={{
+                      color: parseFloat(usdcBalance) < total ? "#E84142" : "rgba(240,235,225,0.3)"
+                    }}>
+                      Your balance: {usdcBalance} USDC
+                      {parseFloat(usdcBalance) < total && " — insufficient"}
+                    </div>
+                  )}
+                </div>
                 <span className="font-cinzel text-2xl" style={{ color: "#C9A84C" }}>
                   {total.toFixed(2)} USDC
                 </span>
               </div>
+              {usdcBalance !== null && parseFloat(usdcBalance) < total && (
+                <a
+                  href="https://faucet.circle.com/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center gap-1.5 font-sans text-xs mt-2 transition-opacity hover:opacity-70"
+                  style={{ color: "#E84142" }}
+                >
+                  <ExternalLink size={11} /> Get test USDC from Circle Faucet (select Avalanche Fuji)
+                </a>
+              )}
             </div>
 
             {/* Actions */}

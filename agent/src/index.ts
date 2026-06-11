@@ -10,7 +10,7 @@ import { initGemini, verifyMilestone }        from "./verifier";
 
 // ── Config ────────────────────────────────────────────────────────────────
 
-const POLL_INTERVAL_MS = 15_000;  // 15 seconds
+const POLL_INTERVAL_MS = 5_000;   // 5 seconds
 const SCAN_DEPTH_BLOCKS = 2_000;  // Fuji public RPC cap: 2048 blocks/getLogs call
 
 // ── State ─────────────────────────────────────────────────────────────────
@@ -81,14 +81,14 @@ async function processSubmission(
       );
       logger.release(milestone.jobId, milestone.milestoneId, amountUsdc, txHash);
 
-      // Update reputation (non-blocking)
-      await caller.updateAgentReputation(
+      // Fire-and-forget: reputation update must not delay payment
+      caller.updateAgentReputation(
         milestone.erc8004FreelancerId,
         milestone.jobId,
         milestone.milestoneId,
         true,
-        `Milestone verified by HERMES agent. Score ${result.score}/100. ${reasonSnippet}`
-      );
+        `Verified by HERMES. Score ${result.score}/100. ${reasonSnippet}`
+      ).catch(err => logger.warn("Reputation update failed: " + String(err)));
     } else {
       const txHash = await caller.rejectMilestoneSubmission(
         milestone.jobId,
@@ -101,14 +101,13 @@ async function processSubmission(
         result.reasoning
       );
 
-      // Update reputation (non-blocking)
-      await caller.updateAgentReputation(
+      caller.updateAgentReputation(
         milestone.erc8004FreelancerId,
         milestone.jobId,
         milestone.milestoneId,
         false,
-        `Milestone rejected by HERMES agent. Score ${result.score}/100. ${reasonSnippet}`
-      );
+        `Rejected by HERMES. Score ${result.score}/100. ${reasonSnippet}`
+      ).catch(err => logger.warn("Reputation update failed: " + String(err)));
     }
 
     completed.add(key);
