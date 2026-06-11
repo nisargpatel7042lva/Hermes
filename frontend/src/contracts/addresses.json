@@ -1,0 +1,9 @@
+{
+  "hermesEscrow": "0x3d0530E710e58B81a2C845111d90B97Da6FaF827",
+  "hermesReputation": "0xB108f0A9Ab1Ce5cEC32afEbf5030529BaE6EFFCc",
+  "usdcFuji": "0x5425890298aed601595a70AB815c96711a31Bc65",
+  "verifier": "0x637A24C97c8e8a3631c6bcdc4B5A62cF2Ca908b7",
+  "network": "fuji",
+  "chainId": 43113,
+  "deployedAt": "2026-06-11T04:11:03.530Z"
+}

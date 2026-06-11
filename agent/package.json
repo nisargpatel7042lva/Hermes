@@ -3,13 +3,14 @@
   "version": "1.0.0",
   "description": "HERMES autonomous milestone payment agent",
   "scripts": {
-    "dev": "ts-node --esm src/index.ts",
+    "dev": "ts-node src/index.ts",
     "start": "node dist/index.js",
     "build": "tsc",
     "watch": "ts-node-dev --respawn --transpile-only src/index.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
+    "axios": "^1.7.7",
     "dotenv": "^16.4.5",
     "ethers": "^6.13.2"
   },

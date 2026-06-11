@@ -3,92 +3,101 @@
 @tailwind utilities;
 
 @layer base {
-  :root {
-    /* Dark obsidian base — Ancient Greek night */
-    --background: 240 10% 4%;
-    --foreground: 40 20% 90%;
-
-    --card: 240 8% 8%;
-    --card-foreground: 40 20% 90%;
-
-    --popover: 240 8% 8%;
-    --popover-foreground: 40 20% 90%;
-
-    /* Gold primary */
-    --primary: 43 74% 52%;
-    --primary-foreground: 240 10% 4%;
-
-    --secondary: 240 5% 15%;
-    --secondary-foreground: 40 20% 90%;
-
-    --muted: 240 5% 12%;
-    --muted-foreground: 240 5% 60%;
-
-    --accent: 43 74% 52%;
-    --accent-foreground: 240 10% 4%;
-
-    --destructive: 0 72% 51%;
-    --destructive-foreground: 40 20% 90%;
-
-    --border: 240 5% 18%;
-    --input: 240 5% 15%;
-    --ring: 43 74% 52%;
-
-    --radius: 0.5rem;
-  }
-}
-
-@layer base {
-  * {
-    @apply border-border;
-  }
+  *, *::before, *::after { box-sizing: border-box; }
 
   body {
-    @apply bg-background text-foreground;
+    background-color: #07060E;
+    color: #F0EBE1;
+    font-family: 'Inter', sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
 
-  /* Greek column decorative scrollbar */
-  ::-webkit-scrollbar {
-    width: 6px;
-  }
-  ::-webkit-scrollbar-track {
-    @apply bg-obsidian-900;
-  }
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: #07060E; }
   ::-webkit-scrollbar-thumb {
-    @apply bg-gold-600 rounded-full;
+    background: rgba(201, 168, 76, 0.3);
+    border-radius: 2px;
   }
 }
 
 @layer components {
-  /* Gold shimmer effect for headings */
-  .gold-shimmer {
+  /* Liquid glass — applied to ALL cards */
+  .liquid-glass {
+    background: rgba(240, 235, 225, 0.03);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .liquid-glass::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
     background: linear-gradient(
-      90deg,
-      #d4af37 0%,
-      #fde68a 40%,
-      #d4af37 60%,
-      #b8960c 100%
+      160deg,
+      rgba(201, 168, 76, 0.6) 0%,
+      rgba(201, 168, 76, 0.1) 30%,
+      rgba(255, 255, 255, 0) 50%,
+      rgba(201, 168, 76, 0.1) 70%,
+      rgba(201, 168, 76, 0.5) 100%
     );
-    background-size: 200% auto;
+    -webkit-mask: linear-gradient(#fff 0 0) content-box,
+                  linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  /* Gold shimmer on hover */
+  .gold-shimmer-hover {
+    background: linear-gradient(
+      105deg,
+      transparent 40%,
+      rgba(201, 168, 76, 0.08) 50%,
+      transparent 60%
+    );
+    background-size: 200% 100%;
+    transition: background-position 0.5s;
+  }
+  .gold-shimmer-hover:hover {
+    background-position: -100% 0;
+  }
+
+  /* Hero marble ambient background */
+  .marble-bg {
+    background:
+      radial-gradient(ellipse at 20% 50%, rgba(201, 168, 76, 0.04) 0%, transparent 60%),
+      radial-gradient(ellipse at 80% 20%, rgba(201, 168, 76, 0.03) 0%, transparent 50%),
+      radial-gradient(ellipse at 50% 100%, rgba(232, 65, 66, 0.04) 0%, transparent 50%);
+  }
+
+  /* Vertical column divider line */
+  .column-divider {
+    width: 1px;
+    background: linear-gradient(to bottom, transparent, rgba(201, 168, 76, 0.4), transparent);
+  }
+
+  /* Gold gradient text */
+  .gold-text-gradient {
+    background: linear-gradient(135deg, #C9A84C 0%, #E2C97E 50%, #C9A84C 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
-    animation: shimmer 3s linear infinite;
   }
 
-  /* Marble card border */
-  .marble-border {
-    border: 1px solid;
-    border-image: linear-gradient(135deg, #d4af37, #52525b, #d4af37) 1;
-  }
-
-  /* Greek column divider */
-  .column-divider {
-    @apply relative flex items-center;
-  }
-  .column-divider::before,
-  .column-divider::after {
-    content: "";
-    @apply flex-1 h-px bg-gradient-to-r from-transparent via-gold-600 to-transparent;
+  /* Loading skeleton */
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      rgba(201, 168, 76, 0.03) 0%,
+      rgba(201, 168, 76, 0.08) 50%,
+      rgba(201, 168, 76, 0.03) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 2.5s linear infinite;
+    border-radius: 0.5rem;
   }
 }
