@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import { NavLink } from "react-router-dom";
 import { ChevronDown, Wallet, UserPlus, Briefcase, ArrowRight, Shield, Zap, Globe } from "lucide-react";
 import GoldParticles from "../components/animations/GoldParticles";
+import HeroBgVideo from "../components/HeroBgVideo";
 import WordsPullUp from "../components/animations/WordsPullUp";
 import FadeUp from "../components/animations/FadeUp";
 import { useStats } from "../hooks/useStats";
@@ -10,15 +11,25 @@ export default function Landing() {
   const stats = useStats();
 
   return (
-    <div className="relative min-h-screen bg-obsidian marble-bg overflow-hidden">
-      <GoldParticles />
+    <div className="relative bg-obsidian overflow-hidden">
 
-      {/* Column accent lines */}
-      <div className="column-divider absolute left-[20%] top-0 h-full opacity-40 hidden lg:block" />
-      <div className="column-divider absolute left-[80%] top-0 h-full opacity-40 hidden lg:block" />
+      {/* Hero — full viewport with video background */}
+      <section className="relative flex flex-col items-center justify-center min-h-screen pt-24 pb-32 px-6 text-center overflow-hidden">
 
-      {/* Hero */}
-      <section className="relative z-10 flex flex-col items-center justify-center min-h-screen pt-24 pb-32 px-6 text-center">
+        {/* Video background — z-0 */}
+        <HeroBgVideo />
+
+        {/* Gold particles float above video — z-10 */}
+        <div className="absolute inset-0 z-10 pointer-events-none">
+          <GoldParticles />
+        </div>
+
+        {/* Column accent lines — z-10 */}
+        <div className="column-divider absolute left-[20%] top-0 h-full opacity-20 hidden lg:block z-10" />
+        <div className="column-divider absolute left-[80%] top-0 h-full opacity-20 hidden lg:block z-10" />
+
+        {/* All hero content — z-20, above video and particles */}
+        <div className="relative z-20 flex flex-col items-center w-full">
 
         {/* Badge */}
         <motion.div
@@ -90,12 +101,17 @@ export default function Landing() {
           </div>
         </FadeUp>
 
-        {/* Scroll indicator */}
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2">
-          <span className="font-sans text-xs" style={{ color: "rgba(240,235,225,0.25)" }}>Scroll to explore</span>
-          <ChevronDown size={16} className="animate-bounce_slow" style={{ color: "rgba(201,168,76,0.4)" }} />
+        </div>{/* end z-20 content wrapper */}
+
+        {/* Scroll indicator — z-20, pinned to bottom of section */}
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 z-20">
+          <span className="font-sans text-xs" style={{ color: "rgba(240,235,225,0.35)" }}>Scroll to explore</span>
+          <ChevronDown size={16} className="animate-bounce_slow" style={{ color: "rgba(201,168,76,0.5)" }} />
         </div>
       </section>
+
+      {/* Sections below hero — solid obsidian bg */}
+      <div className="bg-obsidian marble-bg">
 
       {/* How it works section */}
       <section className="relative z-10 max-w-5xl mx-auto px-6 pb-24">
@@ -210,6 +226,7 @@ export default function Landing() {
         </FadeUp>
       </section>
     </div>
+  </div>
   );
 }
 

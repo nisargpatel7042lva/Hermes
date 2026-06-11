@@ -7,13 +7,15 @@ import { ethers } from "ethers";
 import { logger }        from "./logger";
 import { ContractCaller, SubmittedMilestone } from "./contractCaller";
 import { initGemini, verifyMilestone }        from "./verifier";
+import { startX402Server }                    from "./x402Server";
+import { verifyViax402 }                      from "./x402Client";
 
-// ── Config ────────────────────────────────────────────────────────────────
+// ── Config ────────────────────────────────────────────────────────────────────
 
-const POLL_INTERVAL_MS = 5_000;   // 5 seconds
-const SCAN_DEPTH_BLOCKS = 2_000;  // Fuji public RPC cap: 2048 blocks/getLogs call
+const POLL_INTERVAL_MS  = 5_000;   // 5 seconds
+const SCAN_DEPTH_BLOCKS = 2_000;   // Fuji public RPC cap: 2048 blocks/getLogs call
 
-// ── State ─────────────────────────────────────────────────────────────────
+// ── State ─────────────────────────────────────────────────────────────────────
 
 // Tracks milestones currently being processed to prevent double-execution
 const inFlight  = new Set<string>();
@@ -24,11 +26,13 @@ function milestoneKey(jobId: number, milestoneId: number): string {
   return `${jobId}-${milestoneId}`;
 }
 
-// ── Core pipeline ─────────────────────────────────────────────────────────
+// ── Core pipeline ─────────────────────────────────────────────────────────────
 
 /**
  * Full verification → payment pipeline for one milestone submission.
- * Idempotent: ignores milestones already in-flight or completed this session.
+ *
+ * Verification goes through the x402 server (pay-per-call AI verification).
+ * Falls back to direct Gemini call if x402 server is unavailable.
  */
 async function processSubmission(
   caller: ContractCaller,
@@ -45,20 +49,40 @@ async function processSubmission(
     );
     logger.info(`Deliverable: ${milestone.deliverableUrl}`);
 
-    // ── 1. AI verification ─────────────────────────────────────────────────
+    // ── 1. AI verification via x402 ────────────────────────────────────────
     let result;
     try {
-      result = await verifyMilestone(
+      result = await verifyViax402(
         milestone.jobId,
         milestone.milestoneId,
         milestone.description,
         milestone.deliverableUrl
       );
-    } catch (err) {
-      // Gemini failure: skip this cycle, retry on next poll
-      logger.error("Gemini verification failed — will retry next poll", err);
-      inFlight.delete(key);
-      return;
+    } catch (x402Err: any) {
+      // If x402 server is unreachable, fall back to direct Gemini call
+      if (
+        String(x402Err).includes("not running") ||
+        String(x402Err).includes("ECONNREFUSED")
+      ) {
+        logger.warn("x402 server unreachable — falling back to direct verification");
+        try {
+          result = await verifyMilestone(
+            milestone.jobId,
+            milestone.milestoneId,
+            milestone.description,
+            milestone.deliverableUrl
+          );
+        } catch (geminiErr) {
+          logger.error("Direct Gemini verification also failed — will retry next poll", geminiErr);
+          inFlight.delete(key);
+          return;
+        }
+      } else {
+        // Non-connection errors (bad payment, Gemini failure inside server) — retry next poll
+        logger.error("x402 verification failed — will retry next poll", x402Err);
+        inFlight.delete(key);
+        return;
+      }
     }
 
     logger.verdict(
@@ -70,7 +94,7 @@ async function processSubmission(
       result.keyFindings
     );
 
-    const amountUsdc = ethers.formatUnits(milestone.amountRaw, 6);
+    const amountUsdc    = ethers.formatUnits(milestone.amountRaw, 6);
     const reasonSnippet = result.reasoning.slice(0, 200);
 
     // ── 2. On-chain action ─────────────────────────────────────────────────
@@ -89,6 +113,7 @@ async function processSubmission(
         true,
         `Verified by HERMES. Score ${result.score}/100. ${reasonSnippet}`
       ).catch(err => logger.warn("Reputation update failed: " + String(err)));
+
     } else {
       const txHash = await caller.rejectMilestoneSubmission(
         milestone.jobId,
@@ -122,7 +147,7 @@ async function processSubmission(
   }
 }
 
-// ── Polling loop ──────────────────────────────────────────────────────────
+// ── Polling loop ──────────────────────────────────────────────────────────────
 
 async function runPollCycle(caller: ContractCaller, fromBlock: number): Promise<number> {
   const latestBlock = await caller.getLatestBlock();
@@ -141,12 +166,19 @@ async function runPollCycle(caller: ContractCaller, fromBlock: number): Promise<
   return latestBlock + 1; // next poll starts from the next unscanned block
 }
 
-// ── Entry point ───────────────────────────────────────────────────────────
+// ── Entry point ───────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
   logger.banner();
 
-  // ── 1. Connect to chain & contracts ───────────────────────────────────────
+  // ── 1. Start x402 verification server ────────────────────────────────────
+  try {
+    await startX402Server();
+  } catch (err) {
+    logger.error("x402 server failed to start — will use direct Gemini fallback", err);
+  }
+
+  // ── 2. Connect to chain & contracts ──────────────────────────────────────
   let caller: ContractCaller;
   try {
     caller = new ContractCaller();
@@ -157,7 +189,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // ── 2. Verify Gemini connection ───────────────────────────────────────────
+  // ── 3. Verify Gemini connection ───────────────────────────────────────────
   try {
     await initGemini();
   } catch (err) {
@@ -165,14 +197,14 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // ── 3. Initial scan — catch any submissions that landed before we started ─
+  // ── 4. Initial scan — catch any submissions that landed before we started ─
   const latestBlock = await caller.getLatestBlock();
   const scanFrom    = Math.max(0, latestBlock - SCAN_DEPTH_BLOCKS);
 
   logger.info(`Running initial scan from block ${scanFrom}…`);
   let nextPollBlock = await runPollCycle(caller, scanFrom);
 
-  // ── 4. Polling loop — Fuji public RPC doesn't support persistent eth_newFilter
+  // ── 5. Polling loop ───────────────────────────────────────────────────────
   logger.info(`Polling every ${POLL_INTERVAL_MS / 1000}s for new submissions…`);
   console.log();
 
@@ -189,7 +221,7 @@ async function main(): Promise<void> {
   setTimeout(tick, POLL_INTERVAL_MS);
 }
 
-// ── Graceful shutdown ──────────────────────────────────────────────────────
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
 
 process.on("SIGINT",  () => { logger.info("Shutting down — HERMES rests."); process.exit(0); });
 process.on("SIGTERM", () => { logger.info("Shutting down — HERMES rests."); process.exit(0); });

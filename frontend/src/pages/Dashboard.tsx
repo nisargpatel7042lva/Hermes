@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, ExternalLink, RefreshCw } from "lucide-react";
 import FadeUp from "../components/animations/FadeUp";
 import TransactionToast, { ToastStatus } from "../components/TransactionToast";
+import X402Feed from "../components/X402Feed";
 import { useWallet } from "../contexts/WalletContext";
 import { useContract, formatUSDC } from "../hooks/useContract";
 
@@ -211,6 +212,9 @@ export default function Dashboard() {
             ))}
           </div>
         </FadeUp>
+
+        {/* x402 live feed */}
+        <X402Feed />
 
         {/* Not connected */}
         {!isConnected && (
