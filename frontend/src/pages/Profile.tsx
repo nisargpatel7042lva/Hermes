@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, NavLink } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ethers } from "ethers";
+import { RefreshCw } from "lucide-react";
 import FadeUp from "../components/animations/FadeUp";
 import { useWallet } from "../contexts/WalletContext";
 import addresses from "../contracts/addresses.json";
@@ -74,23 +75,35 @@ export default function Profile() {
   const [agent, setAgent] = useState<Agent | null>(null);
   const [history, setHistory] = useState<RepEvent[]>([]);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [notFound, setNotFound] = useState(false);
 
+  const load = useCallback(async (showFullLoader = false) => {
+    if (!target) return;
+    if (showFullLoader) { setLoading(true); setAgent(null); setHistory([]); setNotFound(false); }
+    else setRefreshing(true);
+    try {
+      const a = await fetchAgent(target);
+      if (!a) { setNotFound(true); return; }
+      setNotFound(false);
+      setAgent(a);
+      const h = await fetchHistory(a.id);
+      setHistory(h);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [target]);
+
+  // Initial load
+  useEffect(() => { load(true); }, [load]);
+
+  // Poll every 15s so reputation updates appear automatically
   useEffect(() => {
     if (!target) return;
-    setLoading(true);
-    setNotFound(false);
-    setAgent(null);
-    setHistory([]);
-    fetchAgent(target)
-      .then(async a => {
-        if (!a) { setNotFound(true); return; }
-        setAgent(a);
-        const h = await fetchHistory(a.id);
-        setHistory(h);
-      })
-      .finally(() => setLoading(false));
-  }, [target]);
+    const interval = setInterval(() => load(false), 15_000);
+    return () => clearInterval(interval);
+  }, [load, target]);
 
   const successRate = agent && agent.totalJobs > 0
     ? Math.round((agent.completedJobs / agent.totalJobs) * 100)
@@ -167,6 +180,17 @@ export default function Profile() {
         {/* Identity card */}
         <FadeUp>
           <div className="liquid-glass rounded-3xl p-8 md:p-12 mb-6">
+            <div className="flex justify-end mb-2">
+              <button
+                onClick={() => load(false)}
+                disabled={refreshing}
+                className="flex items-center gap-1.5 font-sans text-xs transition-opacity hover:opacity-70 disabled:opacity-40"
+                style={{ color: "rgba(201,168,76,0.6)" }}
+              >
+                <RefreshCw size={12} className={refreshing ? "animate-spin" : ""} />
+                {refreshing ? "Updating..." : "Refresh"}
+              </button>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
               <div>
                 <span className="font-cinzel text-6xl" style={{ color: "#C9A84C" }}>Ω</span>

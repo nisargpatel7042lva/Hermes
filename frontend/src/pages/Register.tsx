@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { NavLink } from "react-router-dom";
+import { Scroll, Scale, Wallet } from "lucide-react";
 import WordsPullUp from "../components/animations/WordsPullUp";
 import FadeUp from "../components/animations/FadeUp";
 import TransactionToast, { ToastStatus } from "../components/TransactionToast";
@@ -148,7 +149,7 @@ export default function Register() {
                       key={r}
                       onClick={() => !alreadyRegistered && setRole(r)}
                       disabled={alreadyRegistered}
-                      className="liquid-glass rounded-xl p-4 text-left transition-all duration-200 disabled:cursor-default"
+                      className="liquid-glass rounded-xl p-4 text-left transition-all duration-200 disabled:cursor-default cursor-pointer hover:scale-[1.02]"
                       style={{
                         border: role === r
                           ? "1px solid rgba(201,168,76,0.6)"
@@ -156,7 +157,12 @@ export default function Register() {
                         background: role === r ? "rgba(201,168,76,0.08)" : undefined,
                       }}
                     >
-                      <div className="text-2xl mb-1">{r === "Freelancer" ? "📜" : "⚖️"}</div>
+                      <div
+                        className="w-8 h-8 rounded-lg flex items-center justify-center mb-2"
+                        style={{ background: "rgba(201,168,76,0.12)", color: "#C9A84C" }}
+                      >
+                        {r === "Freelancer" ? <Scroll size={16} /> : <Scale size={16} />}
+                      </div>
                       <div className="font-cinzel text-sm" style={{ color: "#F0EBE1" }}>{r}</div>
                       <div className="font-sans text-xs mt-0.5" style={{ color: "rgba(240,235,225,0.4)" }}>
                         {r === "Freelancer" ? "I deliver work" : "I post jobs"}
@@ -183,10 +189,10 @@ export default function Register() {
                 ) : (
                   <button
                     onClick={connectWallet}
-                    className="liquid-glass w-full rounded-full px-6 py-3 flex items-center justify-center gap-3 font-sans text-sm transition-all hover:scale-[1.02]"
-                    style={{ color: "#C9A84C" }}
+                    className="liquid-glass w-full rounded-full px-6 py-3 flex items-center justify-center gap-3 font-sans text-sm transition-all hover:scale-[1.02] cursor-pointer"
+                    style={{ color: "#C9A84C", border: "1px solid rgba(201,168,76,0.3)" }}
                   >
-                    <span>🦊</span> Connect MetaMask
+                    <Wallet size={16} /> Connect Wallet
                   </button>
                 )}
               </div>

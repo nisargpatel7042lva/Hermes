@@ -1,0 +1,17 @@
+{
+  "name": "HERMES — Autonomous Milestone Payments",
+  "short_name": "HERMES",
+  "description": "Autonomous payment agent that verifies freelance work and releases USDC on Avalanche.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#07060E",
+  "theme_color": "#C9A84C",
+  "icons": [
+    {
+      "src": "/hermes-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

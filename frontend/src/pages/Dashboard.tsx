@@ -41,7 +41,7 @@ interface MilestoneData {
 
 export default function Dashboard() {
   const { account, isConnected, connectWallet } = useWallet();
-  const { getJobsByClient, getJobsByFreelancer, getJob, getMilestone, submitMilestone } = useContract();
+  const { getJobsByClient, getJobsByFreelancer, getJob, getMilestone, submitMilestone, getReleaseTxHash } = useContract();
 
   const [tab, setTab] = useState<"client" | "freelancer">("client");
   const [jobs, setJobs] = useState<JobData[]>([]);
@@ -50,6 +50,7 @@ export default function Dashboard() {
   const [milestones, setMilestones] = useState<Record<string, MilestoneData>>({});
   const [submitUrls, setSubmitUrls] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState<string | null>(null);
+  const [releaseTxs, setReleaseTxs] = useState<Record<string, string>>({});
   const [toast, setToast] = useState<ToastStatus>(null);
   const [txHash, setTxHash] = useState<string>();
   const [errMsg, setErrMsg] = useState<string>();
@@ -90,6 +91,18 @@ export default function Dashboard() {
       } catch {}
     }
   }, [getMilestone]);
+
+  // Fetch Snowtrace tx hash for newly-released milestones
+  useEffect(() => {
+    Object.entries(milestones).forEach(([key, m]) => {
+      if (m.status === 3 && !releaseTxs[key]) {
+        const [jobId, milestoneId] = key.split("-").map(Number);
+        getReleaseTxHash(jobId, milestoneId).then(hash => {
+          if (hash) setReleaseTxs(prev => ({ ...prev, [key]: hash }));
+        });
+      }
+    });
+  }, [milestones]);
 
   // Poll every 5s while any visible milestone is "Submitted" (status 1)
   const expandedJobRef = useRef<{ id: number; count: number } | null>(null);
@@ -201,14 +214,18 @@ export default function Dashboard() {
 
         {/* Not connected */}
         {!isConnected && (
-          <FadeUp className="text-center py-24">
-            <p className="font-cinzel text-xl mb-4" style={{ color: "rgba(240,235,225,0.4)" }}>
-              Connect your wallet to enter the arena
+          <FadeUp className="text-center py-20">
+            <span className="font-cinzel text-5xl block mb-4" style={{ color: "rgba(201,168,76,0.2)" }}>Ω</span>
+            <p className="font-cinzel text-xl mb-2" style={{ color: "rgba(240,235,225,0.4)" }}>
+              Enter the arena
+            </p>
+            <p className="font-instrument italic text-base mb-6" style={{ color: "rgba(240,235,225,0.25)" }}>
+              Connect your wallet to view your jobs and milestones
             </p>
             <button
               onClick={connectWallet}
-              className="liquid-glass rounded-full px-6 py-3 font-cinzel text-sm"
-              style={{ color: "#C9A84C" }}
+              className="liquid-glass rounded-full px-6 py-3 font-cinzel text-sm transition-all hover:scale-105 cursor-pointer"
+              style={{ color: "#C9A84C", border: "1px solid rgba(201,168,76,0.3)" }}
             >
               Connect Wallet
             </button>
@@ -226,10 +243,25 @@ export default function Dashboard() {
 
         {/* Empty */}
         {!loading && isConnected && jobs.length === 0 && (
-          <FadeUp className="text-center py-24">
-            <p className="font-cinzel text-xl" style={{ color: "rgba(240,235,225,0.3)" }}>
-              No jobs yet — the arena awaits your first covenant
+          <FadeUp className="text-center py-20">
+            <span className="font-cinzel text-5xl block mb-4" style={{ color: "rgba(201,168,76,0.2)" }}>Ω</span>
+            <p className="font-cinzel text-xl mb-2" style={{ color: "rgba(240,235,225,0.4)" }}>
+              {tab === "client" ? "No jobs posted yet" : "No work assigned yet"}
             </p>
+            <p className="font-instrument italic text-base mb-6" style={{ color: "rgba(240,235,225,0.25)" }}>
+              {tab === "client"
+                ? "Post a job to escrow funds and find a freelancer"
+                : "Freelancers are assigned by clients when posting a job"}
+            </p>
+            {tab === "client" && (
+              <a
+                href="/post-job"
+                className="inline-block liquid-glass rounded-full px-6 py-3 font-cinzel text-sm transition-all hover:scale-105 cursor-pointer"
+                style={{ color: "#C9A84C", border: "1px solid rgba(201,168,76,0.3)" }}
+              >
+                Post Your First Job →
+              </a>
+            )}
           </FadeUp>
         )}
 
@@ -370,10 +402,21 @@ export default function Dashboard() {
 
                                   {/* Released */}
                                   {m.status === 3 && (
-                                    <div className="flex items-center gap-2 mt-2">
+                                    <div className="flex flex-wrap items-center gap-3 mt-2">
                                       <span className="font-sans text-xs" style={{ color: "rgba(134,239,172,0.8)" }}>
                                         ⚡ Payment Released
                                       </span>
+                                      {releaseTxs[mk] && (
+                                        <a
+                                          href={`https://testnet.snowtrace.io/tx/${releaseTxs[mk]}`}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="flex items-center gap-1 font-sans text-xs hover:opacity-70 transition-opacity"
+                                          style={{ color: "#C9A84C" }}
+                                        >
+                                          View tx <ExternalLink size={10} />
+                                        </a>
+                                      )}
                                       {m.deliverableUrl && (
                                         <a
                                           href={m.deliverableUrl}

@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import Navbar from "./components/Navbar";
 import WrongNetworkBanner from "./components/WrongNetworkBanner";
 import WalletPicker from "./components/WalletPicker";
+import GettingStarted from "./components/GettingStarted";
 import Landing from "./pages/Landing";
 import Register from "./pages/Register";
 import PostJob from "./pages/PostJob";
@@ -24,6 +25,7 @@ export default function App() {
       <Navbar />
       <WrongNetworkBanner />
       <WalletPicker />
+      <GettingStarted />
       <AnimatePresence mode="wait">
         <motion.div
           key={location.pathname}

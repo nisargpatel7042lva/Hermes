@@ -175,6 +175,19 @@ export function useContract() {
     catch { return false; }
   }
 
+  // Returns the tx hash of the MilestoneReleased event, if it exists in recent blocks
+  async function getReleaseTxHash(jobId: number, milestoneId: number): Promise<string | null> {
+    if (!readEscrow) return null;
+    try {
+      const prov = readEscrow.runner as ethers.BrowserProvider;
+      const latest = await prov.getBlockNumber();
+      const from = Math.max(0, latest - 2000);
+      const filter = readEscrow.filters.MilestoneReleased(BigInt(jobId), BigInt(milestoneId));
+      const events = await readEscrow.queryFilter(filter, from, latest);
+      return events.length > 0 ? events[events.length - 1].transactionHash : null;
+    } catch { return null; }
+  }
+
   return {
     account,
     registerAgent,
@@ -188,6 +201,7 @@ export function useContract() {
     getAgentByWallet,
     getReputationHistory,
     isRegistered,
+    getReleaseTxHash,
     addresses,
   };
 }
