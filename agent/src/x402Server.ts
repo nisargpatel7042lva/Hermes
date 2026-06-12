@@ -19,7 +19,8 @@ import { logger } from "./logger";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-export const X402_PORT      = Number(process.env.X402_PORT ?? 3001);
+// Render assigns $PORT at runtime; X402_PORT is the local fallback
+export const X402_PORT      = Number(process.env.PORT ?? process.env.X402_PORT ?? 3001);
 const PRICE_USDC            = parseFloat(process.env.X402_PRICE_USDC ?? "0.10");
 const PRICE_RAW             = BigInt(Math.round(PRICE_USDC * 1_000_000)); // 6 decimals
 const RPC                   = process.env.FUJI_RPC_URL ?? "https://api.avax-test.network/ext/bc/C/rpc";

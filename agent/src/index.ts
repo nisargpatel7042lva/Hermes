@@ -177,6 +177,18 @@ async function main(): Promise<void> {
     logger.error("x402 server failed to start — will use direct Gemini fallback", err);
   }
 
+  // ── 1b. Keep-alive self-ping (Render free tier) ──────────────────────────
+  const renderUrl = process.env.RENDER_EXTERNAL_URL;
+  if (renderUrl) {
+    setInterval(async () => {
+      try {
+        const res = await fetch(`${renderUrl}/health`);
+        logger.info(`Keep-alive ping → ${res.status}`);
+      } catch { /* ignore — GitHub Actions cron is the primary keep-alive */ }
+    }, 9 * 60 * 1_000); // every 9 minutes
+    logger.info(`Keep-alive enabled → ${renderUrl}/health`);
+  }
+
   // ── 2. Connect to chain & contracts ──────────────────────────────────────
   let caller: ContractCaller;
   try {

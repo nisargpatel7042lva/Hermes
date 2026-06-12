@@ -16,7 +16,7 @@ interface ActivityEvent {
   timestamp:   number;
 }
 
-const X402_URL = "http://localhost:3001";
+const X402_URL = import.meta.env.VITE_X402_URL ?? "http://localhost:3001";
 const SNOWTRACE = "https://testnet.snowtrace.io/tx";
 
 export default function X402Feed() {
