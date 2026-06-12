@@ -46,8 +46,8 @@ export async function initGemini(): Promise<void> {
     }
   } catch (err) {
     const msg = String(err);
-    if (msg.includes("429") || msg.includes("quota")) {
-      logger.warn(`Gemini quota/rate-limit on startup probe — proceeding anyway. Verifications will retry per-poll.`);
+    if (msg.includes("429") || msg.includes("quota") || msg.includes("503") || msg.includes("Service Unavailable") || msg.includes("high demand")) {
+      logger.warn(`Gemini transient error on startup probe — proceeding anyway. Verifications will retry per-poll.`);
     } else {
       throw err; // hard failures (bad key, network) still crash early
     }
@@ -125,7 +125,7 @@ export async function verifyMilestone(
 
 // ── Gemini call with rate-limit retry ────────────────────────────────────
 
-async function callGeminiWithRetry(prompt: string, maxAttempts = 3): Promise<string> {
+async function callGeminiWithRetry(prompt: string, maxAttempts = 4): Promise<string> {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const model  = genAI.getGenerativeModel({ model: MODEL_NAME });
@@ -133,13 +133,21 @@ async function callGeminiWithRetry(prompt: string, maxAttempts = 3): Promise<str
       return result.response.text();
     } catch (err: any) {
       const msg = String(err);
-      const isRateLimit = msg.includes("429") || msg.includes("quota") || msg.includes("RESOURCE_EXHAUSTED");
+      const isRateLimit   = msg.includes("429") || msg.includes("quota") || msg.includes("RESOURCE_EXHAUSTED");
+      const isOverloaded  = msg.includes("503") || msg.includes("Service Unavailable") || msg.includes("high demand");
 
-      if (isRateLimit && attempt < maxAttempts) {
-        // Parse the suggested retry delay from the error body, default 65s
-        const match = msg.match(/"retryDelay":"(\d+)s"/);
-        const waitSec = match ? Math.min(parseInt(match[1]) + 2, 120) : 65;
-        logger.warn(`Gemini rate-limited — waiting ${waitSec}s then retrying (${attempt}/${maxAttempts - 1})…`);
+      if ((isRateLimit || isOverloaded) && attempt < maxAttempts) {
+        let waitSec: number;
+        if (isRateLimit) {
+          // Parse the suggested retry delay from the error body, default 65s
+          const match = msg.match(/"retryDelay":"(\d+)s"/);
+          waitSec = match ? Math.min(parseInt(match[1]) + 2, 120) : 65;
+          logger.warn(`Gemini rate-limited — waiting ${waitSec}s then retrying (${attempt}/${maxAttempts - 1})…`);
+        } else {
+          // 503 overload — shorter exponential backoff: 10s, 20s, 40s
+          waitSec = 10 * Math.pow(2, attempt - 1);
+          logger.warn(`Gemini overloaded (503) — waiting ${waitSec}s then retrying (${attempt}/${maxAttempts - 1})…`);
+        }
         await new Promise(r => setTimeout(r, waitSec * 1_000));
         continue;
       }

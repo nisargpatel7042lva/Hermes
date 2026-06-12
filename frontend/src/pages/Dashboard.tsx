@@ -362,6 +362,11 @@ export default function Dashboard() {
                               const mk = `${job.id}-${mi}`;
                               const m = milestones[mk];
                               const subKey = mk;
+
+                              // Sequential lock: previous milestone must be Released (status 3)
+                              const prevMilestone = mi > 0 ? milestones[`${job.id}-${mi - 1}`] : null;
+                              const isLocked = mi > 0 && prevMilestone?.status !== 3;
+
                               if (!m) return (
                                 <div key={mi} className="py-4 border-b skeleton h-8 rounded" style={{ borderColor: "rgba(240,235,225,0.05)" }} />
                               );
@@ -385,8 +390,19 @@ export default function Dashboard() {
                                     </div>
                                   </div>
 
+                                  {/* Locked — previous milestone not yet released */}
+                                  {m.status === 0 && isFreelancer && isLocked && (
+                                    <div
+                                      className="mt-2 rounded-lg px-3 py-2 font-sans text-xs flex items-center gap-2"
+                                      style={{ background: "rgba(107,114,128,0.08)", border: "1px solid rgba(107,114,128,0.2)", color: "rgba(240,235,225,0.3)" }}
+                                    >
+                                      <span style={{ fontSize: "0.9em" }}>🔒</span>
+                                      Complete and pass milestone #{mi} before this one unlocks. Hermes enforces sequential delivery to protect both parties.
+                                    </div>
+                                  )}
+
                                   {/* Freelancer can submit */}
-                                  {m.status === 0 && isFreelancer && (
+                                  {m.status === 0 && isFreelancer && !isLocked && (
                                     <div className="mt-3">
                                       <div
                                         className="rounded-lg px-3 py-2 mb-2 font-sans text-xs leading-relaxed"

@@ -49,6 +49,22 @@ async function processSubmission(
     );
     logger.info(`Deliverable: ${milestone.deliverableUrl}`);
 
+    // ── 0. Sequential enforcement ──────────────────────────────────────────
+    if (milestone.milestoneId > 0) {
+      const prereqsDone = await caller.arePreviousMilestonesReleased(
+        milestone.jobId,
+        milestone.milestoneId
+      );
+      if (!prereqsDone) {
+        logger.warn(
+          `Sequential hold — Job #${milestone.jobId} · Milestone #${milestone.milestoneId} ` +
+          `cannot be verified until all previous milestones are released. Will retry next poll.`
+        );
+        inFlight.delete(key); // allow retry when prerequisites clear
+        return;
+      }
+    }
+
     // ── 1. AI verification via x402 ────────────────────────────────────────
     let result;
     try {
@@ -98,22 +114,13 @@ async function processSubmission(
     const reasonSnippet = result.reasoning.slice(0, 200);
 
     // ── 2. On-chain action ─────────────────────────────────────────────────
+    // Reputation is updated automatically by the escrow contract on release/reject
     if (result.passed) {
       const txHash = await caller.releaseMilestonePayment(
         milestone.jobId,
         milestone.milestoneId
       );
       logger.release(milestone.jobId, milestone.milestoneId, amountUsdc, txHash);
-
-      // Fire-and-forget: reputation update must not delay payment
-      caller.updateAgentReputation(
-        milestone.erc8004FreelancerId,
-        milestone.jobId,
-        milestone.milestoneId,
-        true,
-        `Verified by HERMES. Score ${result.score}/100. ${reasonSnippet}`
-      ).catch(err => logger.warn("Reputation update failed: " + String(err)));
-
     } else {
       const txHash = await caller.rejectMilestoneSubmission(
         milestone.jobId,
@@ -125,14 +132,6 @@ async function processSubmission(
         txHash,
         result.reasoning
       );
-
-      caller.updateAgentReputation(
-        milestone.erc8004FreelancerId,
-        milestone.jobId,
-        milestone.milestoneId,
-        false,
-        `Rejected by HERMES. Score ${result.score}/100. ${reasonSnippet}`
-      ).catch(err => logger.warn("Reputation update failed: " + String(err)));
     }
 
     completed.add(key);
@@ -197,14 +196,28 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // ── 4. Initial scan — catch any submissions that landed before we started ─
+  // ── 4. State scan — catch any Submitted milestones regardless of age ─────
+  logger.info("Scanning current on-chain state for pending submissions…");
+  try {
+    const stateMilestones = await caller.getSubmittedMilestonesByState();
+    if (stateMilestones.length > 0) {
+      logger.info(`Found ${stateMilestones.length} submitted milestone(s) in state — processing…`);
+      await Promise.allSettled(stateMilestones.map(m => processSubmission(caller, m)));
+    } else {
+      logger.info("No pending submissions in current state.");
+    }
+  } catch (err) {
+    logger.error("State scan failed — continuing with event scan", err);
+  }
+
+  // ── 5. Event scan — catch any submissions since last known block ──────────
   const latestBlock = await caller.getLatestBlock();
   const scanFrom    = Math.max(0, latestBlock - SCAN_DEPTH_BLOCKS);
 
-  logger.info(`Running initial scan from block ${scanFrom}…`);
+  logger.info(`Running event scan from block ${scanFrom}…`);
   let nextPollBlock = await runPollCycle(caller, scanFrom);
 
-  // ── 5. Polling loop ───────────────────────────────────────────────────────
+  // ── 6. Polling loop ───────────────────────────────────────────────────────
   logger.info(`Polling every ${POLL_INTERVAL_MS / 1000}s for new submissions…`);
   console.log();
 

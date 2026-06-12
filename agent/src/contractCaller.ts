@@ -168,6 +168,58 @@ export class ContractCaller {
     return results;
   }
 
+  /**
+   * Returns true only if every milestone before `milestoneId` on this job
+   * has been Released. Enforces sequential milestone completion.
+   */
+  async arePreviousMilestonesReleased(jobId: number, milestoneId: number): Promise<boolean> {
+    for (let prevId = 0; prevId < milestoneId; prevId++) {
+      try {
+        const m = await this.escrow.getMilestone(jobId, prevId);
+        if (Number(m.status) !== Number(MilestoneStatus.Released)) return false;
+      } catch {
+        return false; // treat fetch failure as not released
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Checks current on-chain state across all jobs to find any milestone
+   * currently in Submitted status — regardless of when it was submitted.
+   * Used at startup to catch submissions older than the event scan window.
+   */
+  async getSubmittedMilestonesByState(): Promise<SubmittedMilestone[]> {
+    const counter = Number(await this.escrow.jobCounter());
+    const results: SubmittedMilestone[] = [];
+
+    for (let jobId = 1; jobId <= counter; jobId++) {
+      try {
+        const job = await this.escrow.getJob(jobId);
+        const milestoneCount = Number(job.milestoneCount);
+
+        for (let mi = 0; mi < milestoneCount; mi++) {
+          try {
+            const milestone = await this.escrow.getMilestone(jobId, mi);
+            if (milestone.status !== MilestoneStatus.Submitted) continue;
+
+            results.push({
+              jobId,
+              milestoneId:         mi,
+              description:         milestone.description as string,
+              deliverableUrl:      milestone.deliverableUrl as string,
+              amountRaw:           milestone.amount as bigint,
+              freelancerAddress:   job.freelancer as string,
+              erc8004FreelancerId: job.erc8004FreelancerId as string,
+            });
+          } catch {}
+        }
+      } catch {}
+    }
+
+    return results;
+  }
+
   // ── Real-time listener ─────────────────────────────────────────────────────
 
   /**
