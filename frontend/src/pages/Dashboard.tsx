@@ -21,6 +21,7 @@ const MILESTONE_STATUS = ["Pending", "Submitted", "Verified", "Released", "Rejec
 interface JobData {
   id: number;
   title: string;
+  description: string;
   client: string;
   freelancer: string;
   totalAmount: bigint;
@@ -61,6 +62,17 @@ export default function Dashboard() {
     loadJobs();
   }, [account, tab]);
 
+  // Always fetches fresh — used both for initial load and polling
+  const fetchMilestones = useCallback(async (jobId: number, count: number) => {
+    for (let i = 0; i < count; i++) {
+      const key = `${jobId}-${i}`;
+      try {
+        const m = await getMilestone(jobId, i);
+        if (m) setMilestones(prev => ({ ...prev, [key]: m as MilestoneData }));
+      } catch {}
+    }
+  }, [getMilestone]);
+
   const loadJobs = useCallback(async () => {
     if (!account) return;
     setLoading(true);
@@ -77,21 +89,16 @@ export default function Dashboard() {
           if (j) fetched.push(j as JobData);
         } catch {}
       }
-      setJobs(fetched.reverse());
+      const ordered = fetched.reverse();
+      setJobs(ordered);
+
+      // Pre-fetch milestones for all jobs so progress bars render immediately
+      for (const job of ordered) {
+        fetchMilestones(job.id, job.milestoneCount);
+      }
     } catch {}
     setLoading(false);
-  }, [account, tab]);
-
-  // Always fetches fresh — used both for initial load and polling
-  const fetchMilestones = useCallback(async (jobId: number, count: number) => {
-    for (let i = 0; i < count; i++) {
-      const key = `${jobId}-${i}`;
-      try {
-        const m = await getMilestone(jobId, i);
-        if (m) setMilestones(prev => ({ ...prev, [key]: m as MilestoneData }));
-      } catch {}
-    }
-  }, [getMilestone]);
+  }, [account, tab, fetchMilestones]);
 
   // Fetch Snowtrace tx hash for newly-released milestones
   useEffect(() => {
@@ -290,6 +297,12 @@ export default function Dashboard() {
                             </h3>
                             <StatusBadge status={job.status} />
                           </div>
+                          {job.description && (
+                            <p className="font-sans text-xs mt-1 mb-2 line-clamp-2 leading-relaxed"
+                              style={{ color: "rgba(240,235,225,0.4)" }}>
+                              {job.description}
+                            </p>
+                          )}
                           <div className="font-cinzel text-2xl" style={{ color: "#C9A84C" }}>
                             {formatUSDC(job.totalAmount)} USDC
                           </div>
@@ -374,23 +387,31 @@ export default function Dashboard() {
 
                                   {/* Freelancer can submit */}
                                   {m.status === 0 && isFreelancer && (
-                                    <div className="flex gap-2 mt-3">
-                                      <input
-                                        type="url"
-                                        placeholder="https://github.com/..."
-                                        value={submitUrls[subKey] ?? ""}
-                                        onChange={e => setSubmitUrls(prev => ({ ...prev, [subKey]: e.target.value }))}
-                                        className="flex-1 bg-transparent border-b outline-none font-sans text-xs py-1"
-                                        style={{ borderColor: "rgba(201,168,76,0.2)", color: "#F0EBE1" }}
-                                      />
-                                      <button
-                                        onClick={() => handleSubmit(job.id, mi)}
-                                        disabled={submitting === subKey || !submitUrls[subKey]}
-                                        className="font-cinzel text-xs px-3 py-1.5 rounded-full disabled:opacity-40"
-                                        style={{ background: "#C9A84C", color: "#07060E" }}
+                                    <div className="mt-3">
+                                      <div
+                                        className="rounded-lg px-3 py-2 mb-2 font-sans text-xs leading-relaxed"
+                                        style={{ background: "rgba(201,168,76,0.06)", border: "1px solid rgba(201,168,76,0.15)", color: "rgba(240,235,225,0.45)" }}
                                       >
-                                        {submitting === subKey ? "..." : "Submit to Hermes"}
-                                      </button>
+                                        <span style={{ color: "rgba(201,168,76,0.7)" }}>Accepted proofs:</span> public GitHub repo, deployed app URL, Google Doc, or any publicly accessible link. Hermes AI fetches and evaluates the content automatically. Submitting unrelated or private links <span style={{ color: "#E84142" }}>reduces your reputation score</span>.
+                                      </div>
+                                      <div className="flex gap-2">
+                                        <input
+                                          type="url"
+                                          placeholder="https://github.com/your-repo or deployed URL..."
+                                          value={submitUrls[subKey] ?? ""}
+                                          onChange={e => setSubmitUrls(prev => ({ ...prev, [subKey]: e.target.value }))}
+                                          className="flex-1 bg-transparent border-b outline-none font-sans text-xs py-1"
+                                          style={{ borderColor: "rgba(201,168,76,0.2)", color: "#F0EBE1" }}
+                                        />
+                                        <button
+                                          onClick={() => handleSubmit(job.id, mi)}
+                                          disabled={submitting === subKey || !submitUrls[subKey]}
+                                          className="font-cinzel text-xs px-3 py-1.5 rounded-full disabled:opacity-40"
+                                          style={{ background: "#C9A84C", color: "#07060E" }}
+                                        >
+                                          {submitting === subKey ? "..." : "Submit to Hermes"}
+                                        </button>
+                                      </div>
                                     </div>
                                   )}
 
@@ -442,7 +463,14 @@ export default function Dashboard() {
                                         ✗ Rejected — resubmission required
                                       </span>
                                       {isFreelancer && (
-                                        <div className="flex gap-2 mt-2">
+                                        <div className="mt-2">
+                                          <div
+                                            className="rounded-lg px-3 py-2 mb-2 font-sans text-xs leading-relaxed"
+                                            style={{ background: "rgba(232,65,66,0.06)", border: "1px solid rgba(232,65,66,0.2)", color: "rgba(240,235,225,0.4)" }}
+                                          >
+                                            Ensure your new submission is a <span style={{ color: "rgba(240,235,225,0.7)" }}>public, accessible URL</span> that directly demonstrates the milestone requirements. Another failed submission will further reduce your reputation.
+                                          </div>
+                                          <div className="flex gap-2">
                                           <input
                                             type="url"
                                             placeholder="New deliverable URL..."
@@ -459,6 +487,7 @@ export default function Dashboard() {
                                           >
                                             Resubmit
                                           </button>
+                                          </div>
                                         </div>
                                       )}
                                     </div>
