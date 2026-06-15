@@ -6,7 +6,7 @@ dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 import { ethers } from "ethers";
 import { logger }        from "./logger";
 import { ContractCaller, SubmittedMilestone } from "./contractCaller";
-import { initGemini, verifyMilestone }        from "./verifier";
+import { initGemini, verifyMilestone, PASS_THRESHOLD } from "./verifier";
 import { startX402Server }                    from "./x402Server";
 import { verifyViax402 }                      from "./x402Client";
 
@@ -14,6 +14,20 @@ import { verifyViax402 }                      from "./x402Client";
 
 const POLL_INTERVAL_MS  = 5_000;   // 5 seconds
 const SCAN_DEPTH_BLOCKS = 2_000;   // Fuji public RPC cap: 2048 blocks/getLogs call
+
+// ── Reputation tiers ──────────────────────────────────────────────────────────
+// Maps a freelancer's ERC-8004 score (0–1000) to an AI pass threshold (0–100).
+// null threshold = auto-reject without calling the AI at all.
+const REPUTATION_TIERS: { minScore: number; threshold: number | null; label: string }[] = [
+  { minScore: 700, threshold: 50,   label: "Trusted"     }, // benefit of the doubt
+  { minScore: 400, threshold: PASS_THRESHOLD, label: "Medium" }, // standard
+  { minScore: 200, threshold: 70,   label: "Low"         }, // stricter review
+  { minScore: 0,   threshold: null, label: "Blacklisted" }, // auto-reject
+];
+
+function getReputationTier(score: number) {
+  return REPUTATION_TIERS.find(t => score >= t.minScore) ?? REPUTATION_TIERS[REPUTATION_TIERS.length - 1];
+}
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -65,7 +79,45 @@ async function processSubmission(
       }
     }
 
-    // ── 1. AI verification via x402 ────────────────────────────────────────
+    // ── 1. ERC-8004 reputation gate ────────────────────────────────────────
+    let passThreshold = PASS_THRESHOLD; // default; overridden by tier below
+
+    const repData = await caller.getFreelancerReputation(milestone.erc8004FreelancerId);
+    if (repData) {
+      const tier = getReputationTier(repData.score);
+      logger.reputationGate(
+        milestone.jobId,
+        milestone.milestoneId,
+        repData.name || milestone.freelancerAddress.slice(0, 10) + "…",
+        repData.score,
+        tier.label,
+        tier.threshold
+      );
+
+      if (tier.threshold === null) {
+        // Auto-reject — don't waste 0.10 USDC on a known bad actor
+        const txHash = await caller.rejectMilestoneSubmission(
+          milestone.jobId,
+          milestone.milestoneId
+        );
+        logger.reject(
+          milestone.jobId,
+          milestone.milestoneId,
+          txHash,
+          `Auto-rejected by reputation gate — ERC-8004 score ${repData.score}/1000 is below minimum threshold`
+        );
+        completed.add(key);
+        return;
+      }
+
+      passThreshold = tier.threshold;
+    } else {
+      logger.info(
+        `ERC-8004: freelancer not registered — using default threshold ${passThreshold}/100`
+      );
+    }
+
+    // ── 2. AI verification via x402 ────────────────────────────────────────
     let result;
     try {
       result = await verifyViax402(
@@ -101,10 +153,13 @@ async function processSubmission(
       }
     }
 
+    // Apply tier-adjusted threshold — overrides the server's default pass/fail
+    const finalPassed = result.score >= passThreshold;
+
     logger.verdict(
       milestone.jobId,
       milestone.milestoneId,
-      result.passed,
+      finalPassed,
       result.score,
       result.reasoning,
       result.keyFindings
@@ -113,9 +168,9 @@ async function processSubmission(
     const amountUsdc    = ethers.formatUnits(milestone.amountRaw, 6);
     const reasonSnippet = result.reasoning.slice(0, 200);
 
-    // ── 2. On-chain action ─────────────────────────────────────────────────
+    // ── 3. On-chain action ─────────────────────────────────────────────────
     // Reputation is updated automatically by the escrow contract on release/reject
-    if (result.passed) {
+    if (finalPassed) {
       const txHash = await caller.releaseMilestonePayment(
         milestone.jobId,
         milestone.milestoneId
@@ -130,7 +185,7 @@ async function processSubmission(
         milestone.jobId,
         milestone.milestoneId,
         txHash,
-        result.reasoning
+        `Score ${result.score}/100 did not meet tier threshold ${passThreshold}/100 — ${result.reasoning}`
       );
     }
 

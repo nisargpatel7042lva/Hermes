@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, ExternalLink, RefreshCw } from "lucide-react";
+import { ChevronDown, ExternalLink, RefreshCw, XCircle } from "lucide-react";
 import FadeUp from "../components/animations/FadeUp";
 import TransactionToast, { ToastStatus } from "../components/TransactionToast";
-import X402Feed from "../components/X402Feed";
+import X402Feed, { VerdictInfo } from "../components/X402Feed";
 import { useWallet } from "../contexts/WalletContext";
 import { useContract, formatUSDC } from "../hooks/useContract";
 
@@ -53,6 +53,7 @@ export default function Dashboard() {
   const [submitUrls, setSubmitUrls] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [releaseTxs, setReleaseTxs] = useState<Record<string, string>>({});
+  const [verdictReasons, setVerdictReasons] = useState<Record<string, VerdictInfo>>({});
   const [toast, setToast] = useState<ToastStatus>(null);
   const [txHash, setTxHash] = useState<string>();
   const [errMsg, setErrMsg] = useState<string>();
@@ -99,6 +100,17 @@ export default function Dashboard() {
     } catch {}
     setLoading(false);
   }, [account, tab, fetchMilestones]);
+
+  // Called by X402Feed when a new verdict arrives — refreshes milestones + stores reason
+  const handleNewVerdict = useCallback((jobId: number, milestoneId: number, info: VerdictInfo) => {
+    const key = `${jobId}-${milestoneId}`;
+    setVerdictReasons(prev => ({ ...prev, [key]: info }));
+    // Wait ~2s for the on-chain tx to propagate, then re-fetch milestone status
+    setTimeout(() => {
+      const job = jobs.find(j => j.id === jobId);
+      if (job) fetchMilestones(job.id, job.milestoneCount);
+    }, 2_000);
+  }, [jobs, fetchMilestones]);
 
   // Fetch Snowtrace tx hash for newly-released milestones
   useEffect(() => {
@@ -152,8 +164,9 @@ export default function Dashboard() {
         ...prev,
         [key]: prev[key] ? { ...prev[key], status: 1, deliverableUrl: url } : prev[key],
       }));
-      // Clear URL input
+      // Clear URL input and any stale rejection reason
       setSubmitUrls(prev => { const n = { ...prev }; delete n[key]; return n; });
+      setVerdictReasons(prev => { const n = { ...prev }; delete n[key]; return n; });
       // Re-fetch all milestones for this job after 3s
       setTimeout(() => {
         const job = jobs.find(j => j.id === jobId);
@@ -221,7 +234,7 @@ export default function Dashboard() {
         </FadeUp>
 
         {/* x402 live feed */}
-        <X402Feed />
+        <X402Feed onNewVerdict={handleNewVerdict} />
 
         {/* Not connected */}
         {!isConnected && (
@@ -404,6 +417,41 @@ export default function Dashboard() {
                                   {/* Freelancer can submit */}
                                   {m.status === 0 && isFreelancer && !isLocked && (
                                     <div className="mt-3">
+
+                                      {/* Rejection reason from previous attempt */}
+                                      {verdictReasons[mk] && !verdictReasons[mk].passed && (
+                                        <div
+                                          className="rounded-lg px-3 py-2.5 mb-3 font-sans text-xs leading-relaxed"
+                                          style={{ background: "rgba(232,65,66,0.07)", border: "1px solid rgba(232,65,66,0.25)" }}
+                                        >
+                                          <div className="flex items-center gap-1.5 mb-2">
+                                            <XCircle size={12} style={{ color: "#E84142" }} />
+                                            <span style={{ color: "#E84142" }}>Rejected by Hermes AI</span>
+                                            <span className="ml-auto font-mono" style={{ color: "rgba(232,65,66,0.7)" }}>
+                                              {verdictReasons[mk].score}/100
+                                            </span>
+                                          </div>
+                                          {/* Score bar */}
+                                          <div className="flex gap-0.5 mb-2">
+                                            {Array.from({ length: 10 }).map((_, i) => (
+                                              <div
+                                                key={i}
+                                                className="h-1 rounded-sm"
+                                                style={{
+                                                  width: "10%",
+                                                  background: i < Math.round(verdictReasons[mk].score / 10)
+                                                    ? "#E84142"
+                                                    : "rgba(232,65,66,0.12)",
+                                                }}
+                                              />
+                                            ))}
+                                          </div>
+                                          <p style={{ color: "rgba(240,235,225,0.65)" }}>
+                                            {verdictReasons[mk].reasoning}
+                                          </p>
+                                        </div>
+                                      )}
+
                                       <div
                                         className="rounded-lg px-3 py-2 mb-2 font-sans text-xs leading-relaxed"
                                         style={{ background: "rgba(201,168,76,0.06)", border: "1px solid rgba(201,168,76,0.15)", color: "rgba(240,235,225,0.45)" }}

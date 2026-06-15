@@ -23,6 +23,7 @@ const ESCROW_ABI = [
 
 const REPUTATION_ABI = [
   "function updateReputation(bytes32 agentId, uint256 jobId, uint256 milestoneId, bool wasPositive, string calldata notes) external",
+  "function getAgent(bytes32 agentId) external view returns (tuple(bytes32 id, address wallet, string name, string role, string metadataUri, uint256 reputationScore, uint256 totalJobs, uint256 completedJobs, uint256 registeredAt, bool isVerified) memory)",
 ];
 
 // Mirror of MilestoneStatus enum in HermesEscrow.sol
@@ -262,6 +263,32 @@ export class ContractCaller {
     );
 
     logger.success("Real-time MilestoneSubmitted listener active");
+  }
+
+  // ── Reputation read ────────────────────────────────────────────────────────
+
+  /**
+   * Queries the on-chain ERC-8004 reputation score for a freelancer.
+   * Returns null if the agentId is the zero hash (unregistered).
+   */
+  async getFreelancerReputation(agentId: string): Promise<{
+    score: number;
+    totalJobs: number;
+    completedJobs: number;
+    name: string;
+  } | null> {
+    if (agentId === ethers.ZeroHash) return null;
+    try {
+      const agent = await this.reputation.getAgent(agentId);
+      return {
+        score:        Number(agent.reputationScore),
+        totalJobs:    Number(agent.totalJobs),
+        completedJobs: Number(agent.completedJobs),
+        name:         agent.name as string,
+      };
+    } catch {
+      return null; // agent not found — treat as unregistered
+    }
   }
 
   // ── Write functions ────────────────────────────────────────────────────────

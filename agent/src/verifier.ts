@@ -5,8 +5,8 @@ import { logger } from "./logger";
 // ── Config ────────────────────────────────────────────────────────────────
 
 const MODEL_NAME     = "gemini-2.5-flash";
-const PASS_THRESHOLD = 60;          // minimum score to auto-release payment
-const MAX_CONTENT    = 3_000;       // chars sent to Gemini — enough to judge, faster to process
+export const PASS_THRESHOLD = 60;   // minimum score to auto-release payment
+const MAX_CONTENT    = 8_000;       // chars sent to Gemini — enough for full README, code, docs
 const FETCH_TIMEOUT  = 8_000;       // ms
 
 let genAI: GoogleGenerativeAI;
@@ -112,8 +112,8 @@ export async function verifyMilestone(
     };
   }
 
-  // Score is the ground truth for payment release
-  const passed = parsed.passed && parsed.score >= PASS_THRESHOLD;
+  // Score is the sole ground truth — ignore the boolean if score says otherwise
+  const passed = parsed.score >= PASS_THRESHOLD;
 
   return {
     passed,
@@ -161,19 +161,28 @@ async function callGeminiWithRetry(prompt: string, maxAttempts = 4): Promise<str
 // ── Content fetching ──────────────────────────────────────────────────────
 
 async function fetchContent(url: string): Promise<string> {
+  // GitHub repo roots need special multi-fallback handling
+  const ghRepo = parseGithubRepo(url);
+  if (ghRepo) {
+    return fetchGithubRepo(ghRepo.owner, ghRepo.repo);
+  }
+
   const normalised = normaliseUrl(url);
+  logger.info(`  Fetch → ${normalised}`);
 
   const response = await axios.get<string>(normalised, {
     timeout:          FETCH_TIMEOUT,
     responseType:     "text",
-    maxContentLength: 2_000_000, // 2 MB cap before we slice
+    maxContentLength: 2_000_000,
     headers: {
       "User-Agent": "HERMES-Verification-Agent/1.0",
       Accept: "text/plain, text/html, */*",
     },
-    // Don't throw on 4xx/5xx — we'll handle it
     validateStatus: () => true,
   });
+
+  const ct = String(response.headers["content-type"] ?? "").split(";")[0];
+  logger.info(`  Status ${response.status} · type: ${ct}`);
 
   if (response.status >= 400) {
     throw new Error(`HTTP ${response.status} from ${normalised}`);
@@ -182,20 +191,61 @@ async function fetchContent(url: string): Promise<string> {
   let text: string =
     typeof response.data === "string" ? response.data : JSON.stringify(response.data);
 
-  // Strip HTML tags for webpage responses (keep text nodes)
   const contentType = (response.headers["content-type"] ?? "") as string;
   if (contentType.includes("text/html")) {
-    text = stripHtml(text);
+    text = extractHtmlText(text);
   }
 
-  return text.slice(0, MAX_CONTENT);
+  const sliced = text.slice(0, MAX_CONTENT);
+  logger.info(`  Content preview: ${sliced.slice(0, 120).replace(/\n/g, " ")}…`);
+  return sliced;
 }
 
 /**
- * Convert common URL patterns to their raw-text equivalents:
- * - GitHub file blobs → raw.githubusercontent.com
- * - Google Docs → plain-text export
- * - Google Sheets → CSV export
+ * GitHub repo roots need branch + filename fallbacks.
+ * Tries main/master × README.md/readme.md before giving up.
+ */
+async function fetchGithubRepo(owner: string, repo: string): Promise<string> {
+  const branches  = ["main", "master", "develop"];
+  const readmes   = ["README.md", "readme.md", "README.rst", "README.txt"];
+
+  for (const branch of branches) {
+    for (const readme of readmes) {
+      const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${readme}`;
+      try {
+        const res = await axios.get<string>(rawUrl, {
+          timeout:          FETCH_TIMEOUT,
+          responseType:     "text",
+          validateStatus:   () => true,
+          headers:          { "User-Agent": "HERMES-Verification-Agent/1.0" },
+        });
+        if (res.status === 200 && res.data) {
+          const text = (typeof res.data === "string" ? res.data : JSON.stringify(res.data))
+            .slice(0, MAX_CONTENT);
+          logger.info(`  GitHub → ${branch}/${readme} (${text.length} chars)`);
+          logger.info(`  Content preview: ${text.slice(0, 120).replace(/\n/g, " ")}…`);
+          return text;
+        }
+      } catch { /* try next */ }
+    }
+  }
+
+  throw new Error(
+    `GitHub repo ${owner}/${repo}: no README found on main/master/develop branches`
+  );
+}
+
+/** Returns {owner, repo} if the URL is a GitHub repo root, null otherwise. */
+function parseGithubRepo(url: string): { owner: string; repo: string } | null {
+  // Match github.com/owner/repo  (not a blob, tree, issues, PR, etc.)
+  const m = url.match(/^https?:\/\/github\.com\/([^/]+)\/([^/?#]+)\/?$/);
+  if (!m) return null;
+  return { owner: m[1], repo: m[2].replace(/\.git$/, "") };
+}
+
+/**
+ * Convert common URL patterns to their raw-text equivalents.
+ * GitHub repo roots are handled separately by fetchGithubRepo().
  */
 function normaliseUrl(url: string): string {
   // GitHub blob → raw content
@@ -205,13 +255,9 @@ function normaliseUrl(url: string): string {
       .replace("/blob/", "/");
   }
 
-  // GitHub repo root → README (try main branch)
-  if (/github\.com\/[^/]+\/[^/]+\/?$/.test(url)) {
-    const base = url.replace(/\/?$/, "");
-    const parts = base.replace("https://github.com/", "").split("/");
-    if (parts.length === 2) {
-      return `https://raw.githubusercontent.com/${parts[0]}/${parts[1]}/main/README.md`;
-    }
+  // GitHub gist
+  if (url.includes("gist.github.com")) {
+    return url; // gist pages render as HTML — handled by extractHtmlText
   }
 
   // Google Docs
@@ -229,15 +275,35 @@ function normaliseUrl(url: string): string {
   return url;
 }
 
-function stripHtml(html: string): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi,  " ")
+/**
+ * Extract readable text from HTML.
+ * Prioritises <main>, <article>, <section> content over navigation/footer noise.
+ */
+function extractHtmlText(html: string): string {
+  // Remove noise blocks entirely
+  let cleaned = html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<nav[\s\S]*?<\/nav>/gi, "")
+    .replace(/<footer[\s\S]*?<\/footer>/gi, "")
+    .replace(/<header[\s\S]*?<\/header>/gi, "");
+
+  // Try to isolate the main content block
+  const mainMatch =
+    cleaned.match(/<main[\s\S]*?<\/main>/i) ??
+    cleaned.match(/<article[\s\S]*?<\/article>/i) ??
+    cleaned.match(/<section[\s\S]*?<\/section>/i) ??
+    cleaned.match(/<div[^>]+(?:id|class)=["'][^"']*(content|main|app|root|body)[^"']*["'][\s\S]*?<\/div>/i);
+
+  const source = mainMatch ? mainMatch[0] : cleaned;
+
+  return source
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/g,  " ")
     .replace(/&amp;/g,   "&")
     .replace(/&lt;/g,    "<")
     .replace(/&gt;/g,    ">")
+    .replace(/&#\d+;/g,  " ")
     .replace(/\s+/g,     " ")
     .trim();
 }
@@ -249,17 +315,37 @@ function buildPrompt(
   url: string,
   content: string
 ): string {
-  return `You are a freelance work verifier. Be fast and decisive.
+  return `You are a technical verifier for a freelance payment escrow. Your job is to judge whether the submitted work genuinely satisfies the milestone requirement and decide if USDC should be released.
 
-MILESTONE REQUIREMENT: ${description}
+MILESTONE REQUIREMENT:
+${description}
 
-DELIVERABLE (${url}):
+SUBMITTED DELIVERABLE URL: ${url}
+CONTENT FETCHED FROM DELIVERABLE:
+---
 ${content}
+---
 
-Does this deliverable complete the milestone? Score ≥${PASS_THRESHOLD} = payment released.
+IMPORTANT CONTEXT:
+- The content above was automatically fetched from the submitted URL. For web apps it may be extracted HTML text; for GitHub repos it is the README. Judge the work based on what is present, not what is absent from the extracted text alone.
+- If the URL is a deployed web app or live demo, its existence and the features visible in the extracted text are valid evidence of completion.
+- Only score 0 if the URL is completely broken, the content is entirely empty, or the work is obviously unrelated to the requirement.
 
-Reply with ONLY this JSON, no markdown:
-{"passed":true/false,"score":0-100,"reasoning":"one sentence max 20 words"}`;
+SCORING RUBRIC (0–100):
+85–100 — Fully complete. Deliverable clearly satisfies the requirement.
+65–84  — Mostly complete. Core requirement is met with minor gaps.
+45–64  — Partially complete. Meaningful progress but significant parts are missing.
+20–44  — Incomplete. Work started but does not satisfy the core requirement.
+0–19   — Completely unrelated, empty, or inaccessible.
+
+A score ≥ ${PASS_THRESHOLD} releases payment. Be fair — do not penalise work for limitations of automated text extraction from live apps.
+
+Reply with ONLY valid JSON — no markdown, no text outside the JSON:
+{
+  "passed": true | false,
+  "score": <integer 0-100>,
+  "reasoning": "<3-5 sentences: describe what you found in the deliverable, how it relates to the requirement, and exactly what meets or falls short of the standard>"
+}`;
 }
 
 // ── JSON parsing ──────────────────────────────────────────────────────────

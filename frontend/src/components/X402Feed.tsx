@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Zap, CheckCircle2, XCircle, Loader2, ExternalLink } from "lucide-react";
 
@@ -16,13 +16,65 @@ interface ActivityEvent {
   timestamp:   number;
 }
 
-const X402_URL = import.meta.env.VITE_X402_URL ?? "http://localhost:3001";
+export interface VerdictInfo {
+  passed:    boolean;
+  score:     number;
+  reasoning: string;
+}
+
+interface Props {
+  onNewVerdict?: (jobId: number, milestoneId: number, info: VerdictInfo) => void;
+}
+
+const X402_URL  = import.meta.env.VITE_X402_URL ?? "http://localhost:3001";
 const SNOWTRACE = "https://testnet.snowtrace.io/tx";
 
-export default function X402Feed() {
+// Stage priority — higher wins when collapsing per-milestone
+const STAGE_RANK: Record<ActivityEvent["stage"], number> = {
+  payment_received: 1,
+  verifying:        2,
+  verdict:          3,
+};
+
+/**
+ * Collapse all events for the same milestone into one card.
+ * Winner is the highest-priority stage; payment info is merged from earlier stages
+ * so the verdict card still shows the payment tx link.
+ */
+function collapseByMilestone(events: ActivityEvent[]): ActivityEvent[] {
+  const byMilestone = new Map<string, ActivityEvent>();
+
+  for (const ev of events) {
+    const key      = `${ev.jobId}-${ev.milestoneId}`;
+    const existing = byMilestone.get(key);
+
+    if (!existing || STAGE_RANK[ev.stage] > STAGE_RANK[existing.stage]) {
+      byMilestone.set(key, {
+        ...ev,
+        // Preserve payment info from earlier stages when stepping up to a higher one
+        paymentTx:  ev.paymentTx  ?? existing?.paymentTx,
+        paidFrom:   ev.paidFrom   ?? existing?.paidFrom,
+        paidAmount: ev.paidAmount || existing?.paidAmount || "",
+      });
+    }
+  }
+
+  // Return newest milestone first
+  return Array.from(byMilestone.values()).sort((a, b) => b.timestamp - a.timestamp);
+}
+
+export default function X402Feed({ onNewVerdict }: Props) {
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [online, setOnline] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+
+  // Stable ref so the polling interval never needs to restart when the callback changes
+  const onNewVerdictRef = useRef(onNewVerdict);
+  useEffect(() => { onNewVerdictRef.current = onNewVerdict; }, [onNewVerdict]);
+
+  // Track which verdict IDs we've already fired the callback for
+  const seenVerdictIds = useRef(new Set<string>());
+  const firstPoll      = useRef(true);
 
   useEffect(() => {
     let mounted = true;
@@ -32,10 +84,30 @@ export default function X402Feed() {
         const res = await fetch(`${X402_URL}/activity`, { signal: AbortSignal.timeout(3000) });
         if (!res.ok) throw new Error("not ok");
         const data = await res.json();
-        if (mounted) {
-          setEvents(data.events ?? []);
-          setOnline(true);
+        if (!mounted) return;
+
+        const evts: ActivityEvent[] = data.events ?? [];
+
+        // On first poll, seed seenVerdictIds without firing callbacks (they're pre-existing)
+        if (firstPoll.current) {
+          evts.forEach(ev => { if (ev.stage === "verdict") seenVerdictIds.current.add(ev.id); });
+          firstPoll.current = false;
+        } else {
+          // On subsequent polls, fire callback for each new verdict
+          for (const ev of evts) {
+            if (ev.stage === "verdict" && !seenVerdictIds.current.has(ev.id)) {
+              seenVerdictIds.current.add(ev.id);
+              onNewVerdictRef.current?.(ev.jobId, ev.milestoneId, {
+                passed:    ev.passed    ?? false,
+                score:     ev.score     ?? 0,
+                reasoning: ev.reasoning ?? "",
+              });
+            }
+          }
         }
+
+        setEvents(evts);
+        setOnline(true);
       } catch {
         if (mounted) setOnline(false);
       }
@@ -44,7 +116,7 @@ export default function X402Feed() {
     poll();
     const interval = setInterval(poll, 4_000);
     return () => { mounted = false; clearInterval(interval); };
-  }, []);
+  }, []); // intentionally no deps — callback is accessed via ref
 
   // Don't render if server is offline and no events
   if (!online && events.length === 0) return null;
@@ -78,7 +150,7 @@ export default function X402Feed() {
               className="font-sans text-xs rounded-full px-2 py-0.5"
               style={{ background: "rgba(201,168,76,0.1)", color: "rgba(201,168,76,0.7)" }}
             >
-              {events.filter(e => e.stage === "verdict").length} verdicts
+              {collapseByMilestone(events).length} milestone{collapseByMilestone(events).length !== 1 ? "s" : ""}
             </span>
           )}
         </div>
@@ -98,9 +170,7 @@ export default function X402Feed() {
             className="overflow-hidden"
           >
             {events.length === 0 ? (
-              <div
-                className="liquid-glass rounded-2xl p-6 text-center"
-              >
+              <div className="liquid-glass rounded-2xl p-6 text-center">
                 <Zap size={20} className="mx-auto mb-2" style={{ color: "rgba(201,168,76,0.3)" }} />
                 <p className="font-instrument italic text-sm" style={{ color: "rgba(240,235,225,0.35)" }}>
                   Waiting for milestone submissions — x402 payments will appear here
@@ -112,9 +182,9 @@ export default function X402Feed() {
             ) : (
               <div className="space-y-3">
                 <AnimatePresence initial={false}>
-                  {events.map(ev => (
+                  {collapseByMilestone(events).map(ev => (
                     <motion.div
-                      key={ev.id}
+                      key={`${ev.jobId}-${ev.milestoneId}`}
                       initial={{ opacity: 0, x: -12 }}
                       animate={{ opacity: 1, x: 0 }}
                       exit={{ opacity: 0, x: 12 }}
@@ -200,8 +270,8 @@ function EventCard({ event: ev }: { event: ActivityEvent }) {
 
             {/* Reasoning */}
             {isVerdict && ev.reasoning && (
-              <p className="font-sans text-xs leading-relaxed mb-1.5 line-clamp-2"
-                style={{ color: "rgba(240,235,225,0.4)" }}>
+              <p className="font-sans text-xs leading-relaxed mb-1.5"
+                style={{ color: "rgba(240,235,225,0.55)" }}>
                 {ev.reasoning}
               </p>
             )}

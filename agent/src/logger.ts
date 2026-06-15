@@ -84,6 +84,27 @@ export const logger = {
     console.log();
   },
 
+  // ── Reputation gate ────────────────────────────────────────────────────────
+  reputationGate(
+    jobId: number,
+    milestoneId: number,
+    agentName: string,
+    score: number,
+    tier: string,
+    threshold: number | null
+  ): void {
+    const tierColor = score < 200 ? C.red : score >= 700 ? C.green : C.yellow;
+    console.log();
+    console.log(`   ${C.bold}🛡  REPUTATION GATE${C.reset} · Job #${jobId} · Milestone #${milestoneId}`);
+    console.log(`   Agent  ${C.bold}${agentName}${C.reset}  ·  Score ${tierColor}${C.bold}${score}/1000${C.reset}  ·  Tier ${tierColor}${tier}${C.reset}`);
+    if (threshold === null) {
+      console.log(`   ${C.red}${C.bold}AUTO-REJECT${C.reset}  — score too low, AI verification skipped`);
+    } else {
+      console.log(`   Pass threshold adjusted to ${C.bold}${threshold}/100${C.reset} for this tier`);
+    }
+    console.log();
+  },
+
   // ── Gemini startup test ───────────────────────────────────────────────────
   geminiOnline(model: string): void {
     line("✦", C.cyan, `Gemini online  (${model})`);
