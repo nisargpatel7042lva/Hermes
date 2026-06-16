@@ -4,10 +4,11 @@ import { logger } from "./logger";
 
 // ── Config ────────────────────────────────────────────────────────────────
 
-const MODEL_NAME     = "gemini-2.5-flash";
+const MODEL_NAME         = "gemini-2.5-flash";
 export const PASS_THRESHOLD = 60;   // minimum score to auto-release payment
-const MAX_CONTENT    = 8_000;       // chars sent to Gemini — enough for full README, code, docs
-const FETCH_TIMEOUT  = 8_000;       // ms
+const MAX_CONTENT        = 8_000;   // chars sent to Gemini — enough for full README, code, docs
+const FETCH_TIMEOUT      = 8_000;   // ms
+const MIN_CONTENT_CHARS  = 150;     // below this the deliverable is uninspectable → auto-reject
 
 let genAI: GoogleGenerativeAI;
 
@@ -85,6 +86,17 @@ export async function verifyMilestone(
       score: 0,
       reasoning: `Deliverable URL could not be fetched: ${String(err)}`,
       keyFindings: ["URL unreachable or returned an error"],
+    };
+  }
+
+  // ── Step 1b: Minimum-content gate ───────────────────────────────────────
+  if (content.trim().length < MIN_CONTENT_CHARS) {
+    logger.warn(`Content too sparse (${content.trim().length} chars) — auto-rejecting`);
+    return {
+      passed:      false,
+      score:       0,
+      reasoning:   `The submitted URL returned only ${content.trim().length} characters of readable content — not enough to verify any work. Make sure your link is publicly accessible and contains your actual deliverable.`,
+      keyFindings: ["Content too sparse to evaluate"],
     };
   }
 
@@ -202,37 +214,81 @@ async function fetchContent(url: string): Promise<string> {
 }
 
 /**
- * GitHub repo roots need branch + filename fallbacks.
- * Tries main/master × README.md/readme.md before giving up.
+ * GitHub repo roots: fetch README (multi-branch fallback) + file tree.
+ * The file tree makes it hard to pass off an unrelated repo as relevant work.
  */
 async function fetchGithubRepo(owner: string, repo: string): Promise<string> {
-  const branches  = ["main", "master", "develop"];
-  const readmes   = ["README.md", "readme.md", "README.rst", "README.txt"];
+  const branches = ["main", "master", "develop"];
+  const readmes  = ["README.md", "readme.md", "README.rst", "README.txt"];
 
-  for (const branch of branches) {
+  let readmeText = "";
+  let usedBranch = "";
+
+  outer: for (const branch of branches) {
     for (const readme of readmes) {
       const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${readme}`;
       try {
         const res = await axios.get<string>(rawUrl, {
-          timeout:          FETCH_TIMEOUT,
-          responseType:     "text",
-          validateStatus:   () => true,
-          headers:          { "User-Agent": "HERMES-Verification-Agent/1.0" },
+          timeout:        FETCH_TIMEOUT,
+          responseType:   "text",
+          validateStatus: () => true,
+          headers:        { "User-Agent": "HERMES-Verification-Agent/1.0" },
         });
         if (res.status === 200 && res.data) {
-          const text = (typeof res.data === "string" ? res.data : JSON.stringify(res.data))
-            .slice(0, MAX_CONTENT);
-          logger.info(`  GitHub → ${branch}/${readme} (${text.length} chars)`);
-          logger.info(`  Content preview: ${text.slice(0, 120).replace(/\n/g, " ")}…`);
-          return text;
+          readmeText  = typeof res.data === "string" ? res.data : JSON.stringify(res.data);
+          usedBranch  = branch;
+          logger.info(`  GitHub → ${branch}/${readme} (${readmeText.length} chars)`);
+          break outer;
         }
       } catch { /* try next */ }
     }
   }
 
-  throw new Error(
-    `GitHub repo ${owner}/${repo}: no README found on main/master/develop branches`
-  );
+  if (!readmeText) {
+    throw new Error(
+      `GitHub repo ${owner}/${repo}: no README found on main/master/develop branches`
+    );
+  }
+
+  // Fetch the file tree — gives Gemini structural evidence of what's actually in the repo
+  const fileTree = await fetchGithubFileTree(owner, repo, usedBranch);
+
+  // README first (most descriptive), file tree after
+  const combined = (readmeText + (fileTree ? `\n\n${fileTree}` : "")).slice(0, MAX_CONTENT);
+  logger.info(`  Combined content: ${combined.length} chars`);
+  logger.info(`  Content preview: ${combined.slice(0, 120).replace(/\n/g, " ")}…`);
+  return combined;
+}
+
+/**
+ * Fetch the flat file listing for a repo via the GitHub Trees API.
+ * Returns a formatted string like "REPO FILE STRUCTURE:\n  src/index.ts\n  ..."
+ * Falls back silently to "" on any error (unauthenticated rate limit, private repo, etc.).
+ */
+async function fetchGithubFileTree(owner: string, repo: string, branch: string): Promise<string> {
+  try {
+    const apiUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`;
+    const res = await axios.get(apiUrl, {
+      timeout:        FETCH_TIMEOUT,
+      validateStatus: () => true,
+      headers: {
+        "User-Agent": "HERMES-Verification-Agent/1.0",
+        Accept:       "application/vnd.github.v3+json",
+      },
+    });
+
+    if (res.status !== 200 || !Array.isArray(res.data?.tree)) return "";
+
+    const files = (res.data.tree as { type: string; path: string }[])
+      .filter(f => f.type === "blob")
+      .map(f => `  ${f.path}`)
+      .slice(0, 80)          // cap at 80 files to stay within MAX_CONTENT
+      .join("\n");
+
+    return `REPO FILE STRUCTURE (${owner}/${repo} · ${branch} branch):\n${files}`;
+  } catch {
+    return "";
+  }
 }
 
 /** Returns {owner, repo} if the URL is a GitHub repo root, null otherwise. */
@@ -315,36 +371,57 @@ function buildPrompt(
   url: string,
   content: string
 ): string {
-  return `You are a technical verifier for a freelance payment escrow. Your job is to judge whether the submitted work genuinely satisfies the milestone requirement and decide if USDC should be released.
+  return `You are a strict but fair payment verifier for a freelance escrow on Avalanche blockchain. USDC is released only when you can cite real evidence that the submitted work satisfies the milestone.
 
-MILESTONE REQUIREMENT:
+═══════════════════════════════════════
+MILESTONE REQUIREMENT
+═══════════════════════════════════════
 ${description}
 
-SUBMITTED DELIVERABLE URL: ${url}
-CONTENT FETCHED FROM DELIVERABLE:
+═══════════════════════════════════════
+SUBMITTED DELIVERABLE
+URL: ${url}
+FETCHED CONTENT:
 ---
 ${content}
 ---
+═══════════════════════════════════════
 
-IMPORTANT CONTEXT:
-- The content above was automatically fetched from the submitted URL. For web apps it may be extracted HTML text; for GitHub repos it is the README. Judge the work based on what is present, not what is absent from the extracted text alone.
-- If the URL is a deployed web app or live demo, its existence and the features visible in the extracted text are valid evidence of completion.
-- Only score 0 if the URL is completely broken, the content is entirely empty, or the work is obviously unrelated to the requirement.
+VERIFICATION PROCESS — follow every step:
 
-SCORING RUBRIC (0–100):
-85–100 — Fully complete. Deliverable clearly satisfies the requirement.
-65–84  — Mostly complete. Core requirement is met with minor gaps.
-45–64  — Partially complete. Meaningful progress but significant parts are missing.
-20–44  — Incomplete. Work started but does not satisfy the core requirement.
-0–19   — Completely unrelated, empty, or inaccessible.
+STEP 1 · REQUIREMENT BREAKDOWN
+Read the milestone requirement and list every concrete, measurable outcome it demands.
+Examples: "a deployed smart contract", "REST API with /login endpoint", "dashboard showing X metric".
+Be specific — vague requirements like "good code" do not count.
 
-A score ≥ ${PASS_THRESHOLD} releases payment. Be fair — do not penalise work for limitations of automated text extraction from live apps.
+STEP 2 · EVIDENCE CHECK
+For each requirement you identified, search the fetched content for direct evidence.
+- For a GitHub repo, the README and file structure tell you what the repo actually contains.
+- For a deployed app, the extracted page text shows what features are visible.
+- For each requirement: either quote the specific evidence you found, or write "NOT FOUND".
+- Do NOT infer or assume work was done. Only what is explicitly present counts.
 
-Reply with ONLY valid JSON — no markdown, no text outside the JSON:
+STEP 3 · RELEVANCE CHECK
+Ask: is this deliverable related to this milestone at all, or is it from a different project / topic?
+If the content is clearly unrelated (e.g. a random website, a different project, unrelated GitHub repo),
+the score MUST be ≤ 15 regardless of content quality.
+
+STEP 4 · SCORING
+Count how many requirements have real evidence vs. how many are NOT FOUND:
+  All evidenced          → 85–100
+  Most evidenced         → 65–84
+  About half evidenced   → 45–64
+  Few evidenced          → 20–44
+  None / unrelated       → 0–19
+
+A score ≥ ${PASS_THRESHOLD} releases USDC to the freelancer.
+Be rigorous: a high score requires citing evidence, not guessing.
+
+Reply with ONLY valid JSON — absolutely no text outside the JSON object:
 {
   "passed": true | false,
-  "score": <integer 0-100>,
-  "reasoning": "<3-5 sentences: describe what you found in the deliverable, how it relates to the requirement, and exactly what meets or falls short of the standard>"
+  "score": <integer 0–100>,
+  "reasoning": "<Your findings from steps 1–4: list the requirements, state the evidence found or NOT FOUND for each, note relevance, explain the score>"
 }`;
 }
 
