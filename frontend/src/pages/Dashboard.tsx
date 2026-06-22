@@ -449,19 +449,16 @@ export default function Dashboard() {
                                           <p style={{ color: "rgba(240,235,225,0.65)" }}>
                                             {verdictReasons[mk].reasoning}
                                           </p>
+                                          <p className="mt-1.5" style={{ color: "rgba(232,65,66,0.7)" }}>
+                                            Submit a public URL — GitHub repo, deployed app, Google Doc, or any publicly accessible link. Submitting unrelated or private links <span style={{ color: "#E84142" }}>reduces your reputation score</span>.
+                                          </p>
                                         </div>
                                       )}
 
-                                      <div
-                                        className="rounded-lg px-3 py-2 mb-2 font-sans text-xs leading-relaxed"
-                                        style={{ background: "rgba(201,168,76,0.06)", border: "1px solid rgba(201,168,76,0.15)", color: "rgba(240,235,225,0.45)" }}
-                                      >
-                                        <span style={{ color: "rgba(201,168,76,0.7)" }}>Accepted proofs:</span> public GitHub repo, deployed app URL, Google Doc, or any publicly accessible link. Hermes AI fetches and evaluates the content automatically. Submitting unrelated or private links <span style={{ color: "#E84142" }}>reduces your reputation score</span>.
-                                      </div>
                                       <div className="flex gap-2">
                                         <input
                                           type="url"
-                                          placeholder="https://github.com/your-repo or deployed URL..."
+                                          placeholder="GitHub repo, deployed app, Google Doc, or any public URL..."
                                           value={submitUrls[subKey] ?? ""}
                                           onChange={e => setSubmitUrls(prev => ({ ...prev, [subKey]: e.target.value }))}
                                           className="flex-1 bg-transparent border-b outline-none font-sans text-xs py-1"

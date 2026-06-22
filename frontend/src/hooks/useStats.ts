@@ -6,6 +6,35 @@ import ReputationABI from "../contracts/abis/HermesReputation.json";
 
 const RPC = "https://api.avax-test.network/ext/bc/C/rpc";
 const CHUNK = 2048;
+const SCAN_BLOCKS = 500_000; // ~11.5 days at 2s/block on Fuji — covers full deployment history
+const PARALLEL_BATCH = 15;
+
+async function countAgentEvents(
+  reputation: ethers.Contract,
+  latestBlock: number
+): Promise<number> {
+  const scanFrom = Math.max(0, latestBlock - SCAN_BLOCKS);
+  const ranges: [number, number][] = [];
+  for (let from = scanFrom; from <= latestBlock; from += CHUNK) {
+    ranges.push([from, Math.min(from + CHUNK - 1, latestBlock)]);
+  }
+
+  let total = 0;
+  for (let i = 0; i < ranges.length; i += PARALLEL_BATCH) {
+    const batch = ranges.slice(i, i + PARALLEL_BATCH);
+    const counts = await Promise.all(
+      batch.map(async ([from, to]) => {
+        try {
+          const filter = reputation.filters.AgentRegistered();
+          const events = await reputation.queryFilter(filter, from, to);
+          return events.length;
+        } catch { return 0; }
+      })
+    );
+    total += counts.reduce((a, b) => a + b, 0);
+  }
+  return total;
+}
 
 export function useStats() {
   const [stats, setStats] = useState({ totalJobs: 0, totalUSDCReleased: "0.00", totalAgents: 0 });
@@ -17,8 +46,10 @@ export function useStats() {
 
     const fetchStats = async () => {
       try {
-        // Total jobs
-        const count = await escrow.jobCounter();
+        const [count, latest] = await Promise.all([
+          escrow.jobCounter(),
+          provider.getBlockNumber(),
+        ]);
         const totalJobs = Number(count);
 
         // Total USDC released across first 50 jobs
@@ -30,15 +61,8 @@ export function useStats() {
           } catch {}
         }
 
-        // Agent count from AgentRegistered events (last 2048 blocks = ~68 min on Fuji)
-        let totalAgents = 0;
-        try {
-          const latest = await provider.getBlockNumber();
-          const from = Math.max(0, latest - CHUNK);
-          const filter = reputation.filters.AgentRegistered();
-          const events = await reputation.queryFilter(filter, from, latest);
-          totalAgents = events.length;
-        } catch {}
+        // Agent count via paginated scan across full deployment history
+        const totalAgents = await countAgentEvents(reputation, latest);
 
         setStats({
           totalJobs,
